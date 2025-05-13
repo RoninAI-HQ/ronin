@@ -9,15 +9,20 @@ import {
   streamAssistantResponse,
 } from './cli.js';
 import chalk from 'chalk';
+import { Spinner } from 'cli-spinner';
 
 // Stores the conversation history. Each element is an object: { role: 'user'|'assistant', content: string }
 const conversationHistory = [];
+let spinnerInstance; // Declare here for accessibility in final catch
 
 async function chat() {
   initializeCLI();
-  displayMessage("Welcome to Claude CLI! Type '/exit' or '/quit' to end the chat, or '/clear' to clear history.");
+  displayMessage("Welcome to Claude CLI! Type '/exit' or '/quit' to end the chat, or '/clear' to clear screen, or '/clear-chat' to clear conversation history.");
 
   let userInput;
+  spinnerInstance = new Spinner('%s');
+  spinnerInstance.setSpinnerString(18);
+
   while (true) {
     userInput = await getUserInput('\n> ');
 
@@ -28,47 +33,57 @@ async function chat() {
 
     if (userInput.toLowerCase() === '/clear') {
       clearScreen();
-      conversationHistory.length = 0; // Clear the history array
-      displayMessage('Screen and conversation history cleared.');
-      continue; // Skip the rest of the loop and prompt for new input
+      displayMessage('Screen cleared.');
+      continue;
+    }
+
+    if (userInput.toLowerCase() === '/clear-chat') {
+      conversationHistory.length = 0;
+      displayMessage('Conversation history cleared.');
+      continue;
     }
 
     conversationHistory.push({ role: 'user', content: userInput });
 
-    process.stdout.write(chalk.magenta('Claude is thinking...'));
+    spinnerInstance.start();
 
     try {
       const assistantResponseStream = getClaudeResponse(userInput, conversationHistory.slice(0, -1));
       
-      // Clear the text-based loading message once the stream starts
-      process.stdout.write('\r' + ' '.repeat('Claude is thinking...'.length) + '\r');
-      
       let fullAssistantResponse = '';
       if (assistantResponseStream) {
-        // Indicate assistant is replying
-        process.stdout.write(chalk.hex('#888')('\nAssistant: ')); 
+        let isFirstChunk = true;
         for await (const chunk of assistantResponseStream) {
-          if (chunk) { // Ensure chunk is not null or undefined
-            streamAssistantResponse(chunk); // New function in cli.js to stream chunks
+          if (isFirstChunk) {
+            spinnerInstance.stop(true);
+            process.stdout.write(chalk.hex('#888')('\nAssistant: '));
+            isFirstChunk = false;
+          }
+          if (chunk) {
+            streamAssistantResponse(chunk);
             fullAssistantResponse += chunk;
           }
         }
-        streamAssistantResponse('\n'); // Add a newline at the end of the streamed response
-        if (fullAssistantResponse) {
-            conversationHistory.push({ role: 'assistant', content: fullAssistantResponse });
+        
+        if (isFirstChunk) {
+          spinnerInstance.stop(true);
+          displayMessage(
+            'Claude responded, but the message was empty. Please try again.'
+          );
         } else {
-             // Handle cases where the stream might have been valid but empty or only yielded null/undefined chunks
-            displayMessage(
-                'Claude responded, but the message was empty. Please try again.'
-            );
+          streamAssistantResponse('\n');
+          if (fullAssistantResponse) {
+            conversationHistory.push({ role: 'assistant', content: fullAssistantResponse });
+          }
         }
       } else {
+        spinnerInstance.stop(true);
         displayMessage(
           'Sorry, I encountered an error or could not get a response. Please try again.'
         );
       }
     } catch (error) {
-      process.stdout.write('\r' + ' '.repeat('Claude is thinking...'.length) + '\r');
+      spinnerInstance.stop(true);
       console.error('API call failed:', error);
       displayMessage('An error occurred while talking to Claude. Check console for details.');
     }
@@ -79,7 +94,10 @@ async function chat() {
 
 // Start the chat application
 chat().catch((error) => {
+  if (spinnerInstance && typeof spinnerInstance.stop === 'function') {
+    spinnerInstance.stop(true);
+  }
   console.error('An unexpected error occurred in chat():', error);
-  closeCLI(); // Ensure CLI is closed even on unexpected errors
+  closeCLI();
   process.exit(1);
 }); 
