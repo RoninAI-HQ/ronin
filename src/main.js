@@ -6,9 +6,9 @@ import {
   displayMessage,
   clearScreen,
   closeCLI,
+  streamAssistantResponse,
 } from './cli.js';
 import chalk from 'chalk';
-import ora from 'ora';
 
 // Stores the conversation history. Each element is an object: { role: 'user'|'assistant', content: string }
 const conversationHistory = [];
@@ -19,7 +19,7 @@ async function chat() {
 
   let userInput;
   while (true) {
-    userInput = await getUserInput('You: ');
+    userInput = await getUserInput('\n> ');
 
     if (userInput.toLowerCase() === '/exit' || userInput.toLowerCase() === '/quit') {
       displayMessage('Exiting Claude CLI. Goodbye!');
@@ -35,23 +35,40 @@ async function chat() {
 
     conversationHistory.push({ role: 'user', content: userInput });
 
-    const spinner = ora({ text: chalk.magenta('Claude is thinking...'), spinner: 'dots' }).start();
+    process.stdout.write(chalk.magenta('Claude is thinking...'));
 
     try {
-      const assistantResponse = await getClaudeResponse(userInput, conversationHistory.slice(0, -1));
+      const assistantResponseStream = getClaudeResponse(userInput, conversationHistory.slice(0, -1));
       
-      if (assistantResponse) {
-        spinner.succeed(chalk.green('Claude responded:'));
-        displayAssistantResponse(assistantResponse);
-        conversationHistory.push({ role: 'assistant', content: assistantResponse });
+      // Clear the text-based loading message once the stream starts
+      process.stdout.write('\r' + ' '.repeat('Claude is thinking...'.length) + '\r');
+      
+      let fullAssistantResponse = '';
+      if (assistantResponseStream) {
+        // Indicate assistant is replying
+        process.stdout.write(chalk.hex('#888')('\nAssistant: ')); 
+        for await (const chunk of assistantResponseStream) {
+          if (chunk) { // Ensure chunk is not null or undefined
+            streamAssistantResponse(chunk); // New function in cli.js to stream chunks
+            fullAssistantResponse += chunk;
+          }
+        }
+        streamAssistantResponse('\n'); // Add a newline at the end of the streamed response
+        if (fullAssistantResponse) {
+            conversationHistory.push({ role: 'assistant', content: fullAssistantResponse });
+        } else {
+             // Handle cases where the stream might have been valid but empty or only yielded null/undefined chunks
+            displayMessage(
+                'Claude responded, but the message was empty. Please try again.'
+            );
+        }
       } else {
-        spinner.fail(chalk.red('Claude did not respond.'));
         displayMessage(
           'Sorry, I encountered an error or could not get a response. Please try again.'
         );
       }
     } catch (error) {
-      spinner.fail(chalk.red('Error during API call.'));
+      process.stdout.write('\r' + ' '.repeat('Claude is thinking...'.length) + '\r');
       console.error('API call failed:', error);
       displayMessage('An error occurred while talking to Claude. Check console for details.');
     }

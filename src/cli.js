@@ -60,6 +60,16 @@ export function displayMessage(message) {
 }
 
 /**
+ * Streams a chunk of the assistant's response to the console.
+ * @param {string} chunk The text chunk to display.
+ */
+export function streamAssistantResponse(chunk) {
+  // Apply any desired styling to the chunk, e.g., chalk.blue(chunk)
+  // For now, just write the chunk as is. Styling is handled in main.js for the "Assistant: " prefix.
+  process.stdout.write(chalk.cyan(chunk)); 
+}
+
+/**
  * Clears the terminal screen.
  */
 export function clearScreen() {
