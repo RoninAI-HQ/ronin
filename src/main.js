@@ -17,7 +17,7 @@ let spinnerInstance; // Declare here for accessibility in final catch
 
 async function chat() {
   initializeCLI();
-  displayMessage("Welcome to Claude CLI! Type '/exit' or '/quit' to end the chat, or '/clear' to clear screen, or '/clear-chat' to clear conversation history.");
+  displayMessage("Welcome to Ronin CLI! Type '/exit' or '/quit' to end the chat, or '/clear' to clear screen, or '/clear-chat' to clear conversation history.");
 
   let userInput;
   spinnerInstance = new Spinner('%s');
