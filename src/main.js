@@ -51,11 +51,12 @@ async function chat() {
   displayMessage("Welcome to Ronin CLI! Type '/exit' or '/quit' to end the chat, or '/clear' to clear screen, or '/clear-chat' to clear conversation history.");
 
   let userInput;
-  spinnerInstance = new Spinner('%s');
+  spinnerInstance = new Spinner('%s ');
   spinnerInstance.setSpinnerString(18);
 
   while (true) {
-    userInput = await getUserInput('\n> ');
+    console.log("");
+    userInput = await getUserInput('> ');
 
     if (userInput.toLowerCase() === '/exit' || userInput.toLowerCase() === '/quit') {
       displayMessage('Exiting Claude CLI. Goodbye!');
@@ -76,6 +77,7 @@ async function chat() {
 
     conversationHistory.push({ role: 'user', content: userInput });
 
+    console.log("");
     spinnerInstance.start();
 
     try {
@@ -87,7 +89,7 @@ async function chat() {
         for await (const chunk of assistantResponseStream) {
           if (isFirstChunk) {
             spinnerInstance.stop(true);
-            process.stdout.write(chalk.hex('#888')('\Ronin: '));
+            process.stdout.write(chalk.hex('#888')('Ronin: '));
             isFirstChunk = false;
           }
           if (chunk) {
