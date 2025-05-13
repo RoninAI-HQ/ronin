@@ -1,5 +1,5 @@
-const axios = require('axios');
-const { apiKey } = require('./config');
+import axios from 'axios';
+import { apiKey } from './config.js';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_NAME = 'claude-3-7-sonnet-latest'; // Or the specific version like claude-3-7-sonnet-20250219
@@ -12,7 +12,7 @@ const MAX_TOKENS = 2048; // Default max tokens
  * @param {Array<{role: string, content: string}>} conversationHistory An array of previous messages in the conversation.
  * @returns {Promise<string|null>} The assistant's response text, or null if an error occurs.
  */
-async function getClaudeResponse(userMessage, conversationHistory = []) {
+export async function getClaudeResponse(userMessage, conversationHistory = []) {
   const messages = [
     ...conversationHistory,
     { role: 'user', content: userMessage },
@@ -61,8 +61,4 @@ async function getClaudeResponse(userMessage, conversationHistory = []) {
     }
     return null; // Indicate an error occurred
   }
-}
-
-module.exports = {
-  getClaudeResponse,
-}; 
+} 
