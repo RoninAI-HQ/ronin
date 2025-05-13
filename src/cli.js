@@ -5,13 +5,20 @@ let rl; // To store the readline interface instance
 
 /**
  * Initializes and returns a readline interface for CLI interaction.
- * If an interface already exists, it returns the existing one.
+ * If an interface already exists and is open, it returns the existing one.
+ * If it's closed or doesn't exist, it creates a new one.
  */
 export function initializeCLI() {
-  if (!rl) {
+  if (!rl) { // Check if rl is null or undefined (it will be if closed by the event listener)
     rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
+    });
+
+    // When the interface closes, set rl to null so it can be re-initialized
+    rl.on('close', () => {
+      // console.log(chalk.dim('Readline interface closed. Will re-initialize if needed.'));
+      rl = null;
     });
   }
   return rl;
@@ -23,8 +30,13 @@ export function initializeCLI() {
  * @returns {Promise<string>} A promise that resolves with the user's input.
  */
 export function getUserInput(promptText = 'You: ') {
-  if (!rl) initializeCLI();
-  return new Promise((resolve) => {
+  initializeCLI(); // Ensure rl is initialized or re-initialized if it was closed
+  return new Promise((resolve, reject) => {
+    if (!rl) {
+      // This should ideally not happen if initializeCLI works correctly,
+      // but as a safeguard:
+      return reject(new Error('Readline interface could not be initialized.'));
+    }
     rl.question(chalk.green(promptText), (input) => {
       resolve(input);
     });
@@ -60,6 +72,6 @@ export function clearScreen() {
 export function closeCLI() {
   if (rl) {
     rl.close();
-    // rl = null; // Optionally reset rl if you might reinitialize later in a more complex app
+    // rl is set to null by the 'close' event listener now
   }
 } 
