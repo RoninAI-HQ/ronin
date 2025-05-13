@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { apiKey } from './config.js';
+
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_NAME = 'claude-3-7-sonnet-latest'; // Or the specific version like claude-3-7-sonnet-20250219
@@ -32,7 +32,7 @@ export async function* getClaudeResponse(userMessage, conversationHistory = []) 
       },
       {
         headers: {
-          'x-api-key': apiKey,
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
           'anthropic-version': ANTHROPIC_VERSION,
           'content-type': 'application/json',
         },

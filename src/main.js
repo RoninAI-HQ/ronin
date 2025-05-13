@@ -1,3 +1,9 @@
+#!/usr/bin/env node
+
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import dotenv from 'dotenv';
 import { getClaudeResponse } from './api.js';
 import {
   initializeCLI,
@@ -14,6 +20,31 @@ import { Spinner } from 'cli-spinner';
 // Stores the conversation history. Each element is an object: { role: 'user'|'assistant', content: string }
 const conversationHistory = [];
 let spinnerInstance; // Declare here for accessibility in final catch
+
+// Function to load application configuration
+function loadAppConfig() {
+  const homeDir = os.homedir();
+  const primaryConfigPath = path.join(homeDir, '.ronin', 'ronin.config');
+  const fallbackConfigPath = path.resolve(process.cwd(), 'ronin.config');
+
+  let configPathToLoad;
+
+  if (fs.existsSync(primaryConfigPath)) {
+    configPathToLoad = primaryConfigPath;
+  } else if (fs.existsSync(fallbackConfigPath)) {
+    configPathToLoad = fallbackConfigPath;
+  }
+
+  if (configPathToLoad) {
+    dotenv.config({ path: configPathToLoad });
+    // console.log(`Configuration loaded from: ${configPathToLoad}`); // Optional: for debugging
+  } else {
+    // console.log('No ronin.config file found in ~/.ronin/ or PWD.'); // Optional: for debugging
+  }
+}
+
+// Load configuration at the start
+loadAppConfig();
 
 async function chat() {
   initializeCLI();
@@ -56,7 +87,7 @@ async function chat() {
         for await (const chunk of assistantResponseStream) {
           if (isFirstChunk) {
             spinnerInstance.stop(true);
-            process.stdout.write(chalk.hex('#888')('\nAssistant: '));
+            process.stdout.write(chalk.hex('#888')('\Ronin: '));
             isFirstChunk = false;
           }
           if (chunk) {
