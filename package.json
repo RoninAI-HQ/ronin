@@ -4,6 +4,9 @@
   "description": "A command-line interface for interacting with Anthropic's Claude API.",
   "type": "module",
   "main": "src/main.js",
+  "bin": {
+    "ronin": "src/main.js"
+  },
   "scripts": {
     "start": "node src/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"

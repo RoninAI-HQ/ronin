@@ -26,7 +26,48 @@ class RoninCLI {
     }
   }
 
+  async handleOneShotQuery(query) {
+    await this.initialize();
+    
+    try {
+      this.ui.showSpinner();
+      const responseStream = this.conversationService.streamResponse(query);
+      
+      let isFirstChunk = true;
+      for await (const chunk of responseStream) {
+        if (isFirstChunk) {
+          this.ui.hideSpinner();
+          this.ui.displayAssistantPrefix();
+          isFirstChunk = false;
+        }
+        this.ui.streamAssistantResponse(chunk);
+      }
+      
+      if (isFirstChunk) {
+        this.ui.hideSpinner();
+        this.ui.displayError('Claude responded, but the message was empty.');
+        process.exit(1);
+      } else {
+        this.ui.displayNewLine();
+        process.exit(0);
+      }
+    } catch (error) {
+      this.ui.hideSpinner();
+      this.ui.displayError(`API error: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
   async run() {
+    // Check for command line arguments for one-shot mode
+    const args = process.argv.slice(2);
+    if (args.length > 0) {
+      const query = args.join(' ');
+      await this.handleOneShotQuery(query);
+      return;
+    }
+
+    // Interactive mode
     await this.initialize();
     
     this.ui.displayWelcome();
