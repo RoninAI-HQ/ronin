@@ -2,7 +2,7 @@ import axios from 'axios';
 
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL_NAME = 'claude-3-7-sonnet-latest'; // Or the specific version like claude-3-7-sonnet-20250219
+const MODEL_NAME = 'claude-sonnet-4-20250514'; // Or the specific version like claude-3-7-sonnet-20250219
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_TOKENS = 2048; // Default max tokens
 
