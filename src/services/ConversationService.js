@@ -3,6 +3,11 @@ import { getClaudeResponse } from '../api.js';
 export class ConversationService {
   constructor() {
     this.history = [];
+    this.mcpManager = null;
+  }
+
+  setMCPManager(mcpManager) {
+    this.mcpManager = mcpManager;
   }
 
   addMessage(role, content) {
@@ -31,10 +36,16 @@ export class ConversationService {
 
   async *streamResponse(userMessage) {
     this.addMessage('user', userMessage);
-    
+
     try {
-      const responseStream = getClaudeResponse(userMessage, this.history.slice(0, -1));
-      
+      // Get available tools from MCP Manager
+      let tools = null;
+      if (this.mcpManager && this.mcpManager.hasTools()) {
+        tools = this.mcpManager.getAvailableTools();
+      }
+
+      const responseStream = getClaudeResponse(userMessage, this.history.slice(0, -1), tools, this.mcpManager);
+
       let fullResponse = '';
       for await (const chunk of responseStream) {
         if (chunk) {
@@ -42,11 +53,11 @@ export class ConversationService {
           yield chunk;
         }
       }
-      
+
       if (fullResponse) {
         this.addMessage('assistant', fullResponse);
       }
-      
+
       return fullResponse;
     } catch (error) {
       throw new Error(`Failed to get response: ${error.message}`);

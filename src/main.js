@@ -4,12 +4,14 @@ import { ConversationService } from './services/ConversationService.js';
 import { FileService } from './services/FileService.js';
 import { CommandService } from './services/CommandService.js';
 import { ConfigService } from './services/ConfigService.js';
+import { MCPManager } from './services/MCPManager.js';
 import { UIController } from './ui/UIController.js';
 import { CLIInterface } from './ui/CLIInterface.js';
 
 class RoninCLI {
   constructor() {
     this.configService = new ConfigService();
+    this.mcpManager = null;
     this.conversationService = new ConversationService();
     this.fileService = new FileService();
     this.commandService = new CommandService(this.fileService, this.conversationService);
@@ -20,6 +22,23 @@ class RoninCLI {
   async initialize() {
     try {
       this.configService.loadConfig();
+
+      // Initialize MCP Manager
+      this.mcpManager = new MCPManager(this.configService);
+      await this.mcpManager.initialize();
+
+      // Connect MCP to ConversationService
+      this.conversationService.setMCPManager(this.mcpManager);
+
+      // Display MCP status
+      const servers = this.mcpManager.getServers();
+      if (servers.length > 0) {
+        console.log(`[MCP] Active servers: ${servers.join(', ')}`);
+        const tools = this.mcpManager.getAvailableTools();
+        if (tools.length > 0) {
+          console.log(`[MCP] Available tools: ${tools.length}`);
+        }
+      }
     } catch (error) {
       this.ui.displayError(`Configuration error: ${error.message}`);
       process.exit(1);
@@ -130,11 +149,33 @@ class RoninCLI {
     }
 
     this.cli.close();
+
+    // Cleanup MCP connections
+    if (this.mcpManager) {
+      await this.mcpManager.shutdown();
+    }
   }
 }
 
 // Start the application
 const app = new RoninCLI();
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n[Ronin] Shutting down...');
+  if (app.mcpManager) {
+    await app.mcpManager.shutdown();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  if (app.mcpManager) {
+    await app.mcpManager.shutdown();
+  }
+  process.exit(0);
+});
+
 app.run().catch((error) => {
   console.error('Application error:', error);
   process.exit(1);
