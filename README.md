@@ -17,7 +17,13 @@ A command-line interface for interacting with AI language models. Supports both 
     ANTHROPIC_API_KEY=YOUR_ACTUAL_API_KEY
 
     # For Local LLMs (optional)
-    LLM_PROVIDER=ollama  # Set to 'ollama' to use local LLMs
+    LLM_PROVIDER=inline-llm  # Options: anthropic, ollama, inline-llm
+
+    # For Inline LLMs
+    INLINE_MODEL_NAME=llama3.2-3b-instruct
+    CONTEXT_SIZE=4096
+
+    # For Ollama
     OLLAMA_MODEL=llama3.2:3b  # Choose your model
     OLLAMA_BASE_URL=http://localhost:11434  # Ollama server URL
     ```
@@ -82,10 +88,41 @@ The response will be displayed and the application will exit automatically.
 - `/models` - List available local models (Ollama only)
 - `/pull [model]` - Download a new model (Ollama only)
 
-## Using Local LLMs with Ollama
+## Using Local LLMs
 
-### Installing Ollama
+Ronin supports two approaches for running local LLMs:
 
+### Option 1: Inline LLMs (Recommended)
+Run models directly within Ronin using node-llama-cpp - no separate server required!
+
+**Setup:**
+1. Set provider in your `.env` file:
+   ```bash
+   LLM_PROVIDER=inline-llm
+   INLINE_MODEL_NAME=llama3.2-3b-instruct
+   ```
+
+2. Switch to inline provider:
+   ```
+   /provider inline-llm
+   ```
+
+3. Download a model:
+   ```
+   /download llama3.2-3b-instruct
+   ```
+
+**Commands:**
+- `/models-available` - See downloadable models
+- `/download [model]` - Download a model
+- `/models` - List your local models
+- `/load-model [name]` - Load a specific model
+- `/unload-model` - Unload current model
+- `/model-info` - Show model status
+
+### Option 2: Ollama (External Server)
+
+**Installing Ollama:**
 1. **macOS/Linux:**
    ```bash
    curl -fsSL https://ollama.ai/install.sh | sh
@@ -93,8 +130,7 @@ The response will be displayed and the application will exit automatically.
 
 2. **Windows:** Download from [ollama.ai](https://ollama.ai)
 
-### Running Ollama
-
+**Running Ollama:**
 1. Start the Ollama server:
    ```bash
    ollama serve
@@ -111,6 +147,13 @@ The response will be displayed and the application will exit automatically.
 
 ### Recommended Local Models
 
+**For Inline LLMs:**
+- **llama3.2-3b-instruct** - Best balance of quality and speed
+- **llama3.2-1b-instruct** - Fastest, minimal memory usage
+- **mistral-7b-instruct** - Excellent for coding tasks
+- **codellama-7b-instruct** - Specialized for code
+
+**For Ollama:**
 - **llama3.2:3b** - Best for general use, runs on most hardware
 - **llama3.2:1b** - Fastest, minimal resource usage
 - **mistral:7b** - Good coding abilities
@@ -122,14 +165,31 @@ You can configure the local LLM using environment variables or a `llm.json` file
 
 **Environment Variables (.env):**
 ```bash
+# For Inline LLMs
+LLM_PROVIDER=inline-llm
+INLINE_MODEL_NAME=llama3.2-3b-instruct
+CONTEXT_SIZE=4096
+MAX_TOKENS=2048
+TEMPERATURE=0.7
+
+# For Ollama
 LLM_PROVIDER=ollama
 OLLAMA_MODEL=llama3.2:3b
 OLLAMA_BASE_URL=http://localhost:11434
-MAX_TOKENS=2048
-TEMPERATURE=0.7
 ```
 
 **Configuration File (llm.json):**
+```json
+{
+  "provider": "inline-llm",
+  "inlineModelName": "llama3.2-3b-instruct",
+  "contextSize": 4096,
+  "maxTokens": 2048,
+  "temperature": 0.7
+}
+```
+
+**Or for Ollama:**
 ```json
 {
   "provider": "ollama",

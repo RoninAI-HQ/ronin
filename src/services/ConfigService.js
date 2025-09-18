@@ -74,10 +74,10 @@ export class ConfigService {
             };
           }
 
-          console.log(`[Config] Loaded MCP configuration from ${configPath}`);
+          // Loaded MCP configuration
           return;
         } catch (error) {
-          console.error(`[Config] Failed to parse MCP config from ${configPath}:`, error.message);
+          // Failed to parse MCP config
         }
       }
     }
@@ -114,6 +114,12 @@ export class ConfigService {
       anthropicApiKey: this.apiKey,
       ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
       ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2:3b',
+      // Inline LLM configuration
+      inlineModelPath: process.env.INLINE_MODEL_PATH || null,
+      inlineModelName: process.env.INLINE_MODEL_NAME || 'llama3.2-3b-instruct',
+      inlineModelsDir: process.env.INLINE_MODELS_DIR || path.join(os.homedir(), '.ronin', 'models'),
+      contextSize: parseInt(process.env.CONTEXT_SIZE) || 4096,
+      gpuLayers: process.env.GPU_LAYERS || 'auto',
       maxTokens: parseInt(process.env.MAX_TOKENS) || 2048,
       temperature: parseFloat(process.env.TEMPERATURE) || 0.7
     };
@@ -131,18 +137,20 @@ export class ConfigService {
           const configContent = fs.readFileSync(configPath, 'utf-8');
           const fileConfig = JSON.parse(configContent);
           this.llmConfig = { ...this.llmConfig, ...fileConfig };
-          console.log(`[Config] Loaded LLM configuration from ${configPath}`);
+          // Loaded LLM configuration
           break;
         } catch (error) {
-          console.error(`[Config] Failed to parse LLM config from ${configPath}:`, error.message);
+          // Failed to parse LLM config
         }
       }
     }
 
     if (this.llmConfig.provider === 'ollama') {
-      console.log(`[Config] LLM Provider: Ollama (${this.llmConfig.ollamaModel})`);
+      // LLM Provider: Ollama
+    } else if (this.llmConfig.provider === 'inline-llm') {
+      // LLM Provider: Inline Local LLM
     } else {
-      console.log('[Config] LLM Provider: Anthropic Claude');
+      // LLM Provider: Anthropic Claude
     }
   }
 

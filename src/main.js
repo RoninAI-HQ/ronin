@@ -32,9 +32,9 @@ class RoninCLI {
       try {
         await initializeLLMProvider(llmConfig);
       } catch (llmError) {
-        console.error(`[LLM] Failed to initialize provider: ${llmError.message}`);
+        // Failed to initialize provider
         if (llmConfig.provider === 'ollama') {
-          console.log('[LLM] Falling back to Anthropic provider');
+          // Falling back to Anthropic provider
           await initializeLLMProvider({ ...llmConfig, provider: 'anthropic' });
         }
       }
@@ -49,10 +49,10 @@ class RoninCLI {
       // Display MCP status
       const servers = this.mcpManager.getServers();
       if (servers.length > 0) {
-        console.log(`[MCP] Active servers: ${servers.join(', ')}`);
+        // MCP servers active
         const tools = this.mcpManager.getAvailableTools();
         if (tools.length > 0) {
-          console.log(`[MCP] Available tools: ${tools.length}`);
+          // MCP tools available
         }
       }
     } catch (error) {
@@ -63,7 +63,19 @@ class RoninCLI {
 
   async handleOneShotQuery(query) {
     await this.initialize();
-    
+
+    // Check if this is a command
+    if (this.commandService.isCommand(query)) {
+      try {
+        const result = await this.commandService.executeCommand(query);
+        this.ui.displayCommandResult(result);
+        process.exit(result.type === 'error' ? 1 : 0);
+      } catch (error) {
+        this.ui.displayError(`Command error: ${error.message}`);
+        process.exit(1);
+      }
+    }
+
     try {
       this.ui.showSpinner();
       const responseStream = this.conversationService.streamResponse(query);
@@ -178,7 +190,7 @@ const app = new RoninCLI();
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n[Ronin] Shutting down...');
+  // Shutting down
   if (app.mcpManager) {
     await app.mcpManager.shutdown();
   }
@@ -193,6 +205,6 @@ process.on('SIGTERM', async () => {
 });
 
 app.run().catch((error) => {
-  console.error('Application error:', error);
+  // Application error
   process.exit(1);
 });

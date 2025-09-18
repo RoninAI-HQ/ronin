@@ -1,4 +1,5 @@
 import { getLLMProviderManager } from '../api.js';
+import { inlineLLMCommands } from './CommandServiceExtensions.js';
 
 export class CommandService {
   constructor(fileService, conversationService) {
@@ -16,7 +17,12 @@ export class CommandService {
       '/clear': this.clearScreen.bind(this),
       '/provider': this.switchProvider.bind(this),
       '/models': this.listModels.bind(this),
-      '/pull': this.pullModel.bind(this)
+      '/pull': this.pullModel.bind(this),
+      '/download': inlineLLMCommands.downloadModel,
+      '/models-available': inlineLLMCommands.listAvailableModels,
+      '/model-info': inlineLLMCommands.getModelInfo,
+      '/load-model': inlineLLMCommands.loadModel,
+      '/unload-model': inlineLLMCommands.unloadModel
     };
   }
 
@@ -30,11 +36,11 @@ export class CommandService {
 
   async executeCommand(input) {
     const [command, ...args] = input.split(' ');
-    
+
     if (command in this.commands) {
       return await this.commands[command](args.join(' '));
     }
-    
+
     return { type: 'error', message: `Unknown command: ${command}` };
   }
 
@@ -56,9 +62,14 @@ export class CommandService {
 
 LLM Provider commands (current: ${currentProvider}):
   /provider      - Show current LLM provider.
-  /provider [name] - Switch to specified provider (anthropic or ollama).
-  /models        - List available models (Ollama only).
-  /pull [model]  - Pull a new model (Ollama only).`
+  /provider [name] - Switch to specified provider (anthropic, ollama, or inline-llm).
+  /models        - List local models.
+  /models-available - List recommended models for download.
+  /pull [model]  - Pull a new model (Ollama only).
+  /download [model] - Download a model (Inline LLM).
+  /load-model [name] - Load a specific model (Inline LLM).
+  /unload-model  - Unload current model (Inline LLM).
+  /model-info    - Show current model information.`
     };
   }
 
@@ -108,15 +119,15 @@ LLM Provider commands (current: ${currentProvider}):
     try {
       const history = await this.fileService.loadConversation(args);
       this.conversationService.setHistory(history);
-      
+
       let preview = '';
       if (history.length > 0) {
         const lastMessage = history[history.length - 1];
         preview = `Last message: [${lastMessage.role}] ${lastMessage.content.substring(0, 50)}...`;
       }
-      
-      return { 
-        type: 'success', 
+
+      return {
+        type: 'success',
         message: `Conversation loaded from ${args}.`,
         additionalMessage: preview
       };
@@ -133,9 +144,9 @@ LLM Provider commands (current: ${currentProvider}):
         );
       }
       this.conversationService.clearHistory();
-      return { 
-        type: 'new', 
-        message: 'New conversation started. Previous conversation saved as JSON (if not empty).' 
+      return {
+        type: 'new',
+        message: 'New conversation started. Previous conversation saved as JSON (if not empty).'
       };
     } catch (error) {
       return { type: 'error', message: `Error saving conversation: ${error.message}` };
@@ -162,10 +173,10 @@ LLM Provider commands (current: ${currentProvider}):
     }
 
     const provider = args.toLowerCase().trim();
-    if (provider !== 'anthropic' && provider !== 'ollama') {
+    if (provider !== 'anthropic' && provider !== 'ollama' && provider !== 'inline-llm') {
       return {
         type: 'error',
-        message: 'Invalid provider. Use "anthropic" or "ollama"'
+        message: 'Invalid provider. Use "anthropic", "ollama", or "inline-llm"'
       };
     }
 
@@ -185,6 +196,12 @@ LLM Provider commands (current: ${currentProvider}):
           type: 'success',
           message: `Switched to Ollama provider (${modelName})`,
           additionalMessage: 'Note: Make sure Ollama is running (ollama serve)'
+        };
+      } else if (provider === 'inline-llm') {
+        return {
+          type: 'success',
+          message: `Switched to Inline Local LLM provider (${modelName})`,
+          additionalMessage: 'Note: Models run directly in Ronin. Use /models-available to see downloadable models.'
         };
       } else {
         return {
@@ -206,10 +223,10 @@ LLM Provider commands (current: ${currentProvider}):
       return { type: 'error', message: 'LLM provider manager not initialized' };
     }
 
-    if (manager.getProviderType() !== 'ollama') {
+    if (manager.getProviderType() !== 'ollama' && manager.getProviderType() !== 'inline-llm') {
       return {
         type: 'info',
-        message: 'Model listing is only available for Ollama provider'
+        message: 'Model listing is only available for Ollama and Inline LLM providers'
       };
     }
 
@@ -222,10 +239,17 @@ LLM Provider commands (current: ${currentProvider}):
         };
       }
 
-      const modelList = models.map(m => `  - ${m.name} (${m.size})`).join('\n');
+      const providerName = manager.getProviderType() === 'ollama' ? 'Ollama' : 'Local';
+      const modelList = models.map(m => {
+        if (manager.getProviderType() === 'inline-llm') {
+          return `  - ${m.name} (${m.size})`;
+        } else {
+          return `  - ${m.name} (${m.size})`;
+        }
+      }).join('\n');
       return {
         type: 'list',
-        message: `Available Ollama models:\n${modelList}`
+        message: `Available ${providerName} models:\n${modelList}`
       };
     } catch (error) {
       return {
@@ -251,7 +275,7 @@ LLM Provider commands (current: ${currentProvider}):
     if (manager.getProviderType() !== 'ollama') {
       return {
         type: 'info',
-        message: 'Model pulling is only available for Ollama provider'
+        message: 'Model pulling is only available for Ollama provider. Use /download for Inline LLM models.'
       };
     }
 
