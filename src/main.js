@@ -7,6 +7,7 @@ import { ConfigService } from './services/ConfigService.js';
 import { MCPManager } from './services/MCPManager.js';
 import { UIController } from './ui/UIController.js';
 import { CLIInterface } from './ui/CLIInterface.js';
+import { initializeLLMProvider } from './api.js';
 
 class RoninCLI {
   constructor() {
@@ -22,6 +23,21 @@ class RoninCLI {
   async initialize() {
     try {
       this.configService.loadConfig();
+
+      // Pass config service to command service
+      this.commandService.setConfigService(this.configService);
+
+      // Initialize LLM Provider
+      const llmConfig = this.configService.getLLMConfig();
+      try {
+        await initializeLLMProvider(llmConfig);
+      } catch (llmError) {
+        console.error(`[LLM] Failed to initialize provider: ${llmError.message}`);
+        if (llmConfig.provider === 'ollama') {
+          console.log('[LLM] Falling back to Anthropic provider');
+          await initializeLLMProvider({ ...llmConfig, provider: 'anthropic' });
+        }
+      }
 
       // Initialize MCP Manager
       this.mcpManager = new MCPManager(this.configService);

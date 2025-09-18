@@ -1,11 +1,27 @@
 import axios from 'axios';
 import { ToolResultFormatter } from './utils/ToolResultFormatter.js';
+import { LLMProviderManager } from './providers/LLMProviderManager.js';
 
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_NAME = 'claude-sonnet-4-20250514'; // Or the specific version like claude-3-7-sonnet-20250219
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_TOKENS = 2048; // Default max tokens
+
+// Global LLM provider manager
+let llmProviderManager = null;
+
+export async function initializeLLMProvider(config) {
+  if (!llmProviderManager) {
+    llmProviderManager = new LLMProviderManager();
+  }
+  await llmProviderManager.initialize(config);
+  return llmProviderManager;
+}
+
+export function getLLMProviderManager() {
+  return llmProviderManager;
+}
 
 /**
  * Sends a message to the Anthropic Claude API and returns an async iterator for the assistant's response.
@@ -16,7 +32,13 @@ const MAX_TOKENS = 2048; // Default max tokens
  * @returns {AsyncGenerator<string, void, unknown>|null} An async iterator yielding text chunks, or null if an error occurs.
  */
 export async function* getClaudeResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
-  // Ensure API key is available
+  // Check if we're using a local provider
+  if (llmProviderManager && llmProviderManager.isLocalProvider()) {
+    yield* getLocalLLMResponse(userMessage, conversationHistory, tools, mcpManager);
+    return;
+  }
+
+  // Ensure API key is available for Anthropic
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('API key not configured');
   }
@@ -256,4 +278,69 @@ export async function* getClaudeResponse(userMessage, conversationHistory = [], 
       return null;
     }
   } // End of while loop
+}
+
+async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
+  try {
+    const provider = llmProviderManager.getProvider();
+    if (!provider) {
+      throw new Error('Local LLM provider not initialized');
+    }
+
+    // Combine conversation history with the new message
+    const messages = [
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    // Stream response from local LLM
+    let fullResponse = '';
+    for await (const chunk of provider.streamResponse(messages, tools)) {
+      fullResponse += chunk;
+      yield chunk;
+
+      // Check if the response contains a tool use pattern
+      // This is a simple implementation - you might want to enhance this
+      if (tools && tools.length > 0 && fullResponse.includes('TOOL_USE:')) {
+        const toolUseMatch = fullResponse.match(/TOOL_USE:\s*({[^}]+})/);
+        if (toolUseMatch) {
+          try {
+            const toolCall = JSON.parse(toolUseMatch[1]);
+            if (mcpManager && toolCall.name && toolCall.parameters) {
+              yield `\n\n*🔄 Executing tool: **${toolCall.name}***\n\n`;
+
+              const result = await mcpManager.executeTool(toolCall.name, toolCall.parameters);
+              const formattedResult = ToolResultFormatter.formatResult(
+                toolCall.name,
+                toolCall.parameters,
+                result
+              );
+
+              yield formattedResult;
+
+              // Continue conversation with tool result
+              const toolResultMessage = `Tool ${toolCall.name} returned: ${JSON.stringify(result)}`;
+              const continuationMessages = [
+                ...messages,
+                { role: 'assistant', content: fullResponse },
+                { role: 'user', content: toolResultMessage }
+              ];
+
+              yield '\n\n---\n\n';
+
+              // Get follow-up response
+              for await (const chunk of provider.streamResponse(continuationMessages, tools)) {
+                yield chunk;
+              }
+            }
+          } catch (error) {
+            yield `\n\nError executing tool: ${error.message}\n\n`;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error with local LLM:', error);
+    throw new Error(`Local LLM error: ${error.message}`);
+  }
 } 

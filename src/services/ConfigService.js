@@ -8,6 +8,7 @@ export class ConfigService {
     this.apiKey = null;
     this.configPath = null;
     this.mcpConfig = null;
+    this.llmConfig = null;
   }
 
   loadConfig() {
@@ -36,6 +37,9 @@ export class ConfigService {
 
     // Load MCP configuration
     this.loadMCPConfig();
+
+    // Load LLM configuration
+    this.loadLLMConfig();
   }
 
   loadMCPConfig() {
@@ -99,5 +103,58 @@ export class ConfigService {
 
   getMCPConfig() {
     return this.mcpConfig;
+  }
+
+  loadLLMConfig() {
+    // Check for LLM provider configuration
+    const provider = process.env.LLM_PROVIDER || 'anthropic';
+
+    this.llmConfig = {
+      provider: provider,
+      anthropicApiKey: this.apiKey,
+      ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+      ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2:3b',
+      maxTokens: parseInt(process.env.MAX_TOKENS) || 2048,
+      temperature: parseFloat(process.env.TEMPERATURE) || 0.7
+    };
+
+    // Try to load from a config file if it exists
+    const homeDir = os.homedir();
+    const llmConfigPaths = [
+      path.join(homeDir, '.ronin', 'llm.json'),
+      path.resolve(process.cwd(), 'llm.json')
+    ];
+
+    for (const configPath of llmConfigPaths) {
+      if (fs.existsSync(configPath)) {
+        try {
+          const configContent = fs.readFileSync(configPath, 'utf-8');
+          const fileConfig = JSON.parse(configContent);
+          this.llmConfig = { ...this.llmConfig, ...fileConfig };
+          console.log(`[Config] Loaded LLM configuration from ${configPath}`);
+          break;
+        } catch (error) {
+          console.error(`[Config] Failed to parse LLM config from ${configPath}:`, error.message);
+        }
+      }
+    }
+
+    if (this.llmConfig.provider === 'ollama') {
+      console.log(`[Config] LLM Provider: Ollama (${this.llmConfig.ollamaModel})`);
+    } else {
+      console.log('[Config] LLM Provider: Anthropic Claude');
+    }
+  }
+
+  getLLMConfig() {
+    return this.llmConfig;
+  }
+
+  setLLMProvider(provider, config = {}) {
+    this.llmConfig = {
+      ...this.llmConfig,
+      provider,
+      ...config
+    };
   }
 }
