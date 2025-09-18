@@ -35,9 +35,7 @@ export class MCPClient {
       }
 
       this.connected = true;
-      console.log(`[MCP] Connected to ${this.name} via ${this.config.transport || 'stdio'}`);
     } catch (error) {
-      console.error(`[MCP] Failed to connect to ${this.name}:`, error.message);
       throw error;
     }
   }
@@ -63,17 +61,15 @@ export class MCPClient {
     });
 
     this.process.on('error', (error) => {
-      console.error(`[MCP] Process error for ${this.name}:`, error.message);
       this.handleDisconnect();
     });
 
     this.process.on('exit', (code, signal) => {
-      console.log(`[MCP] Process ${this.name} exited with code ${code}, signal ${signal}`);
       this.handleDisconnect();
     });
 
     this.process.stderr.on('data', (data) => {
-      console.error(`[MCP] ${this.name} stderr:`, data.toString());
+      // Ignore stderr output
     });
 
     this.transport = new StdioClientTransport({
@@ -123,7 +119,6 @@ export class MCPClient {
 
       return result.content?.[0] || { text: 'No result' };
     } catch (error) {
-      console.error(`[MCP] Tool execution error on ${this.name}:`, error.message);
       throw error;
     }
   }
@@ -153,10 +148,9 @@ export class MCPClient {
         await this.client.close();
       }
     } catch (error) {
-      console.error(`[MCP] Error closing client ${this.name}:`, error.message);
+      // Error closing client
     }
 
     this.handleDisconnect();
-    console.log(`[MCP] Disconnected from ${this.name}`);
   }
 }

@@ -16,7 +16,6 @@ export class MCPManager extends EventEmitter {
 
     const mcpConfig = this.configService.getMCPConfig();
     if (!mcpConfig || !mcpConfig.servers) {
-      console.log('[MCP] No MCP servers configured');
       return;
     }
 
@@ -24,7 +23,7 @@ export class MCPManager extends EventEmitter {
       try {
         await this.connectServer(name, config);
       } catch (error) {
-        console.error(`[MCP] Failed to connect to server ${name}:`, error.message);
+        // Failed to connect to server
       }
     }
 
@@ -33,7 +32,6 @@ export class MCPManager extends EventEmitter {
 
   async connectServer(name, config) {
     if (this.servers.has(name)) {
-      console.log(`[MCP] Server ${name} already connected`);
       return;
     }
 
@@ -46,7 +44,6 @@ export class MCPManager extends EventEmitter {
       server = new MCPClient(name, config);
       await server.connect();
     } else {
-      console.log(`[MCP] Skipping server ${name} - no command specified`);
       return;
     }
 
@@ -61,7 +58,6 @@ export class MCPManager extends EventEmitter {
       });
     }
 
-    console.log(`[MCP] Connected to ${name} with ${tools.length} tools`);
     this.emit('server:connected', { name, tools });
   }
 
@@ -72,7 +68,7 @@ export class MCPManager extends EventEmitter {
     try {
       await server.disconnect();
     } catch (error) {
-      console.error(`[MCP] Error disconnecting ${name}:`, error.message);
+      // Error disconnecting server
     }
 
     for (const [toolName, tool] of this.tools.entries()) {
@@ -128,7 +124,8 @@ export class MCPManager extends EventEmitter {
       try {
         await server.disconnect();
       } catch (error) {
-        console.error(`[MCP] Error shutting down ${name}:`, error.message);
+        this.emit('tool:error', { toolName, args, error });
+        throw error;
       }
     }
     this.servers.clear();

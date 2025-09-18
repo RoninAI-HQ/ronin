@@ -33,11 +33,7 @@ class RoninCLI {
       // Display MCP status
       const servers = this.mcpManager.getServers();
       if (servers.length > 0) {
-        console.log(`[MCP] Active servers: ${servers.join(', ')}`);
         const tools = this.mcpManager.getAvailableTools();
-        if (tools.length > 0) {
-          console.log(`[MCP] Available tools: ${tools.length}`);
-        }
       }
     } catch (error) {
       this.ui.displayError(`Configuration error: ${error.message}`);

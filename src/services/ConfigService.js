@@ -70,7 +70,6 @@ export class ConfigService {
             };
           }
 
-          console.log(`[Config] Loaded MCP configuration from ${configPath}`);
           return;
         } catch (error) {
           console.error(`[Config] Failed to parse MCP config from ${configPath}:`, error.message);
