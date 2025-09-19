@@ -1,7 +1,10 @@
+import { PermissionCache } from './PermissionCache.js';
+
 export class CommandService {
   constructor(fileService, conversationService) {
     this.fileService = fileService;
     this.conversationService = conversationService;
+    this.permissionCache = new PermissionCache();
     this.commands = {
       '/help': this.showHelp.bind(this),
       '/exit': this.exit.bind(this),
@@ -10,7 +13,8 @@ export class CommandService {
       '/export': this.exportConversation.bind(this),
       '/load': this.loadConversation.bind(this),
       '/new': this.newConversation.bind(this),
-      '/clear': this.clearScreen.bind(this)
+      '/clear': this.clearScreen.bind(this),
+      '/permissions': this.managePermissions.bind(this)
     };
   }
 
@@ -32,14 +36,18 @@ export class CommandService {
     return {
       type: 'help',
       message: `Available commands:
-  /help          - Show this help message.
-  /exit, /quit   - Exit the Ronin CLI.
-  /save          - Save the current conversation as a Markdown file.
-  /export        - Export the current conversation to a JSON file.
-  /load list     - List saved conversation files in the current directory.
-  /load [path]   - Load a conversation from the specified JSON file.
-  /new           - Save current conversation, then start a new one (clears screen and history).
-  /clear         - Clear the terminal screen.`
+  /help                - Show this help message.
+  /exit, /quit         - Exit the Ronin CLI.
+  /save                - Save the current conversation as a Markdown file.
+  /export              - Export the current conversation to a JSON file.
+  /load list           - List saved conversation files in the current directory.
+  /load [path]         - Load a conversation from the specified JSON file.
+  /new                 - Save current conversation, then start a new one (clears screen and history).
+  /clear               - Clear the terminal screen.
+  /permissions         - Manage tool permissions.
+  /permissions status  - Show permission cache status.
+  /permissions clear   - Clear all cached permissions.
+  /permissions always  - Enable/disable always-ask mode.`
     };
   }
 
@@ -125,5 +133,66 @@ export class CommandService {
 
   clearScreen() {
     return { type: 'clear', message: 'Screen cleared.' };
+  }
+
+  async managePermissions(args) {
+    if (!args) {
+      return {
+        type: 'info',
+        message: `Permission management commands:
+  /permissions status  - Show permission cache status
+  /permissions clear   - Clear all cached permissions
+  /permissions always on/off - Enable/disable always-ask mode`
+      };
+    }
+
+    const [subcommand, ...subargs] = args.split(' ');
+
+    switch (subcommand.toLowerCase()) {
+      case 'status':
+        const stats = this.permissionCache.getStats();
+        return {
+          type: 'info',
+          message: `Permission Cache Status:
+  Total cached approvals: ${stats.totalApprovals}
+  Always ask mode: ${stats.alwaysAsk ? 'ON' : 'OFF'}
+  Session started: ${stats.sessionStart ? new Date(stats.sessionStart).toLocaleString() : 'Unknown'}`
+        };
+
+      case 'clear':
+        this.permissionCache.clearCache();
+        return {
+          type: 'success',
+          message: 'All cached permissions have been cleared.'
+        };
+
+      case 'always':
+        const mode = subargs[0]?.toLowerCase();
+        if (mode === 'on' || mode === 'true') {
+          this.permissionCache.setAlwaysAsk(true);
+          return {
+            type: 'success',
+            message: 'Always-ask mode enabled. All tool calls will require explicit permission.'
+          };
+        } else if (mode === 'off' || mode === 'false') {
+          this.permissionCache.setAlwaysAsk(false);
+          return {
+            type: 'success',
+            message: 'Always-ask mode disabled. Cached permissions will be used when available.'
+          };
+        } else {
+          const currentMode = this.permissionCache.getStats().alwaysAsk;
+          return {
+            type: 'info',
+            message: `Always-ask mode is currently ${currentMode ? 'ON' : 'OFF'}. Use "/permissions always on" or "/permissions always off" to change.`
+          };
+        }
+
+      default:
+        return {
+          type: 'error',
+          message: `Unknown permissions subcommand: ${subcommand}`
+        };
+    }
   }
 }

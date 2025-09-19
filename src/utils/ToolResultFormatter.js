@@ -1,30 +1,28 @@
 export class ToolResultFormatter {
   static formatResult(toolName, toolInput, result) {
-    const header = `## 🔧 Tool: \`${toolName}\`\n`;
-
     if (result.error || result.isError) {
-      return header + this.formatError(toolName, result);
+      return this.formatError(toolName, result);
     }
 
     switch (toolName) {
       case 'file_list':
-        return header + this.formatFileList(result, toolInput);
+        return this.formatFileList(result, toolInput);
       case 'file_read':
-        return header + this.formatFileRead(result, toolInput);
+        return this.formatFileRead(result, toolInput);
       case 'file_write':
-        return header + this.formatFileWrite(result, toolInput);
+        return this.formatFileWrite(result, toolInput);
       case 'shell_execute':
-        return header + this.formatShellExecute(result, toolInput);
+        return this.formatShellExecute(result, toolInput);
       case 'web_request':
-        return header + this.formatWebRequest(result, toolInput);
+        return this.formatWebRequest(result, toolInput);
       default:
-        return header + this.formatGeneric(result, toolInput);
+        return this.formatGeneric(result, toolInput);
     }
   }
 
   static formatError(toolName, result) {
     const errorMsg = result.error || result.message || 'Unknown error';
-    return `❌ **Error**: ${errorMsg}\n\n`;
+    return `Error executing ${toolName}: ${errorMsg}`;
   }
 
   static formatFileList(result, input) {
@@ -32,183 +30,80 @@ export class ToolResultFormatter {
       return this.formatGeneric(result, input);
     }
 
-    const path = result.path || input.path || 'Unknown path';
-    let output = `📁 **Directory**: \`${path}\`\n`;
-    output += `📊 **Total**: ${result.count || result.files.length} items\n\n`;
+    const path = result.path || input.path || 'current directory';
+    const totalItems = result.count || result.files.length;
+    const directories = result.files.filter(f => f.type === 'directory').length;
+    const files = result.files.filter(f => f.type === 'file').length;
 
-    if (result.files.length === 0) {
-      output += '*Empty directory*\n\n';
-      return output;
+    if (totalItems === 0) {
+      return `Listed ${path} (empty directory)`;
     }
 
-    // Group by type
-    const directories = result.files.filter(f => f.type === 'directory');
-    const files = result.files.filter(f => f.type === 'file');
-
-    if (directories.length > 0) {
-      output += `### 📂 Directories (${directories.length})\n`;
-      for (const dir of directories) {
-        output += `- 📁 **${dir.name}**\n`;
-      }
-      output += '\n';
+    let summary = `Listed ${path} (${totalItems} items`;
+    if (directories > 0 && files > 0) {
+      summary += `: ${directories} dirs, ${files} files`;
+    } else if (directories > 0) {
+      summary += `: ${directories} directories`;
+    } else if (files > 0) {
+      summary += `: ${files} files`;
     }
+    summary += ')';
 
-    if (files.length > 0) {
-      output += `### 📄 Files (${files.length})\n`;
-      for (const file of files) {
-        const ext = this.getFileExtension(file.name);
-        const icon = this.getFileIcon(ext);
-        output += `- ${icon} \`${file.name}\`\n`;
-      }
-      output += '\n';
-    }
-
-    return output;
+    return summary;
   }
 
   static formatFileRead(result, input) {
-    const path = result.path || input.path || 'Unknown file';
+    const path = result.path || input.path || 'unknown file';
     const content = result.content || '';
 
-    let output = `📖 **Reading**: \`${path}\`\n`;
-    output += `📏 **Size**: ${content.length} characters\n\n`;
-
     if (content.length === 0) {
-      output += '*File is empty*\n\n';
-      return output;
+      return `Read ${path} (empty file)`;
     }
 
-    // Detect file type and format accordingly
-    const ext = this.getFileExtension(path);
-    const language = this.getLanguageFromExtension(ext);
-
-    if (content.length > 2000) {
-      output += `### 📝 Content Preview (first 2000 characters)\n\n`;
-      output += `\`\`\`${language}\n${content.substring(0, 2000)}...\n\`\`\`\n\n`;
-      output += `*File truncated - showing first 2000 of ${content.length} characters*\n\n`;
-    } else {
-      output += `### 📝 File Content\n\n`;
-      output += `\`\`\`${language}\n${content}\n\`\`\`\n\n`;
-    }
-
-    return output;
+    const sizeDesc = content.length > 1000 ? `${Math.round(content.length/1000)}k chars` : `${content.length} chars`;
+    return `Read ${path} (${sizeDesc})`;
   }
 
   static formatFileWrite(result, input) {
-    const path = result.path || input.path || 'Unknown file';
+    const path = result.path || input.path || 'unknown file';
     const bytesWritten = result.bytesWritten || input.content?.length || 0;
 
-    let output = `✍️ **Writing**: \`${path}\`\n`;
-    output += `💾 **Bytes written**: ${bytesWritten}\n`;
-
-    if (result.success) {
-      output += `✅ **Status**: Successfully written\n\n`;
-    } else {
-      output += `⚠️ **Status**: Write completed (no confirmation)\n\n`;
-    }
-
-    return output;
+    const sizeDesc = bytesWritten > 1000 ? `${Math.round(bytesWritten/1000)}k bytes` : `${bytesWritten} bytes`;
+    return `Wrote ${path} (${sizeDesc})`;
   }
 
   static formatShellExecute(result, input) {
-    const command = result.command || input.command || 'Unknown command';
-    const exitCode = result.exitCode !== undefined ? result.exitCode : 'Unknown';
+    const command = result.command || input.command || 'unknown command';
+    const exitCode = result.exitCode !== undefined ? result.exitCode : '?';
 
-    let output = `⚡ **Command**: \`${command}\`\n`;
-    output += `🔢 **Exit Code**: ${exitCode}\n`;
+    // Get just the command name (first word) for brevity
+    const commandName = command.split(' ')[0];
 
-    if (result.cwd || input.cwd) {
-      output += `📂 **Working Directory**: \`${result.cwd || input.cwd}\`\n`;
+    if (exitCode === 0) {
+      return `Executed ${commandName} (exit code: ${exitCode})`;
+    } else {
+      return `Executed ${commandName} (exit code: ${exitCode})`;
     }
-
-    output += '\n';
-
-    if (result.stdout && result.stdout.trim()) {
-      output += `### 📤 Standard Output\n\`\`\`\n${result.stdout.trim()}\n\`\`\`\n\n`;
-    }
-
-    if (result.stderr && result.stderr.trim()) {
-      output += `### ⚠️ Standard Error\n\`\`\`\n${result.stderr.trim()}\n\`\`\`\n\n`;
-    }
-
-    if (!result.stdout?.trim() && !result.stderr?.trim()) {
-      output += `*No output*\n\n`;
-    }
-
-    return output;
   }
 
   static formatWebRequest(result, input) {
-    const url = input.url || 'Unknown URL';
+    const url = input.url || 'unknown URL';
     const method = (input.method || 'GET').toUpperCase();
-    const status = result.status || 'Unknown';
+    const status = result.status || '?';
 
-    let output = `🌐 **${method}**: \`${url}\`\n`;
-    output += `📊 **Status**: ${status}`;
-
-    if (result.statusText) {
-      output += ` ${result.statusText}`;
+    // Extract domain from URL for brevity
+    let domain;
+    try {
+      domain = new URL(url).hostname;
+    } catch {
+      domain = url.length > 30 ? url.substring(0, 30) + '...' : url;
     }
 
-    output += '\n';
-
-    // Show response headers if present
-    if (result.headers && Object.keys(result.headers).length > 0) {
-      output += `\n### 📋 Response Headers\n`;
-      const importantHeaders = ['content-type', 'content-length', 'cache-control', 'last-modified'];
-      for (const header of importantHeaders) {
-        if (result.headers[header]) {
-          output += `- **${header}**: \`${result.headers[header]}\`\n`;
-        }
-      }
-      output += '\n';
-    }
-
-    // Format response data
-    if (result.data !== undefined) {
-      output += `### 📄 Response Data\n`;
-
-      const contentType = result.headers?.['content-type'] || '';
-
-      if (contentType.includes('application/json')) {
-        output += `\`\`\`json\n${JSON.stringify(result.data, null, 2)}\n\`\`\`\n\n`;
-      } else if (contentType.includes('text/html')) {
-        const dataStr = typeof result.data === 'string' ? result.data : String(result.data);
-        if (dataStr.length > 1000) {
-          output += `\`\`\`html\n${dataStr.substring(0, 1000)}...\n\`\`\`\n`;
-          output += `*Response truncated - showing first 1000 of ${dataStr.length} characters*\n\n`;
-        } else {
-          output += `\`\`\`html\n${dataStr}\n\`\`\`\n\n`;
-        }
-      } else if (contentType.includes('text/')) {
-        const dataStr = typeof result.data === 'string' ? result.data : String(result.data);
-        output += `\`\`\`\n${dataStr}\n\`\`\`\n\n`;
-      } else {
-        output += `\`\`\`\n${JSON.stringify(result.data, null, 2)}\n\`\`\`\n\n`;
-      }
-    }
-
-    return output;
+    return `${method} ${domain} (${status})`;
   }
 
   static formatGeneric(result, input) {
-    let output = '';
-
-    if (input && Object.keys(input).length > 0) {
-      output += `### 📥 Input\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\`\n\n`;
-    }
-
-    output += `### 📤 Result\n`;
-
-    if (typeof result === 'string') {
-      output += `\`\`\`\n${result}\n\`\`\`\n\n`;
-    } else if (result && typeof result === 'object') {
-      output += `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n\n`;
-    } else {
-      output += `\`${result}\`\n\n`;
-    }
-
-    return output;
+    return `Tool executed successfully`;
   }
 
   static getFileExtension(filename) {

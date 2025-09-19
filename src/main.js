@@ -30,6 +30,9 @@ class RoninCLI {
       // Connect MCP to ConversationService
       this.conversationService.setMCPManager(this.mcpManager);
 
+      // Connect CLI interface to ConversationService for confirmations
+      this.conversationService.setCLIInterface(this.cli);
+
       // Display MCP status
       const servers = this.mcpManager.getServers();
       if (servers.length > 0) {
@@ -57,7 +60,7 @@ class RoninCLI {
         }
         this.ui.streamAssistantResponse(chunk);
       }
-      
+
       if (isFirstChunk) {
         this.ui.hideSpinner();
         this.ui.displayError('Claude responded, but the message was empty.');
@@ -131,7 +134,7 @@ class RoninCLI {
           }
           this.ui.streamAssistantResponse(chunk);
         }
-        
+
         if (isFirstChunk) {
           this.ui.hideSpinner();
           this.ui.displayMessage('Claude responded, but the message was empty. Please try again.');
