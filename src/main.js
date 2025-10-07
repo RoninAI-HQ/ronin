@@ -30,6 +30,10 @@ class RoninCLI {
       // Connect MCP to ConversationService
       this.conversationService.setMCPManager(this.mcpManager);
 
+      // Update CommandService with MCPManager and ConfigService
+      this.commandService.mcpManager = this.mcpManager;
+      this.commandService.configService = this.configService;
+
       // Connect CLI interface to ConversationService for confirmations
       this.conversationService.setCLIInterface(this.cli);
 
