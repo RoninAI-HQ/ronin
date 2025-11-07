@@ -104,6 +104,40 @@ export class ConfigService {
     return this.mcpConfig;
   }
 
+  saveMCPConfig(config) {
+    // Find the MCP config file path
+    const mcpConfigPaths = [
+      path.resolve(process.cwd(), 'mcp.json'),
+      path.join(os.homedir(), '.ronin', 'mcp.json'),
+      path.resolve(process.cwd(), 'ronin-mcp.json'),
+      path.join(os.homedir(), '.ronin', 'ronin-mcp.json')
+    ];
+
+    // Use the first existing path, or default to mcp.json in current directory
+    let configPath = mcpConfigPaths.find(p => fs.existsSync(p)) || mcpConfigPaths[0];
+
+    try {
+      // Ensure directory exists if it's in .ronin folder
+      if (configPath.includes('.ronin')) {
+        const dir = path.dirname(configPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+      }
+
+      // Write the configuration
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      this.mcpConfig = config;
+      return configPath;
+    } catch (error) {
+      throw new Error(`Failed to save MCP configuration: ${error.message}`);
+    }
+  }
+
+  reloadMCPConfig() {
+    this.loadMCPConfig();
+  }
+
   loadLLMConfig() {
     // Check for LLM provider configuration
     const provider = process.env.LLM_PROVIDER || 'anthropic';

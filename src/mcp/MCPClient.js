@@ -1,5 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { spawn } from 'child_process';
 
 export class MCPClient {
@@ -22,6 +24,10 @@ export class MCPClient {
 
       if (transport === 'stdio') {
         await this.connectStdio();
+      } else if (transport === 'sse') {
+        await this.connectSSE();
+      } else if (transport === 'websocket' || transport === 'ws') {
+        await this.connectWebSocket();
       } else {
         throw new Error(`Unsupported transport: ${transport}`);
       }
@@ -78,6 +84,95 @@ export class MCPClient {
       env,
       stdio: this.process.stdio
     });
+
+    this.client = new Client({
+      name: `ronin-${this.name}`,
+      version: '1.0.0'
+    }, {
+      capabilities: {}
+    });
+
+    await this.client.connect(this.transport);
+  }
+
+  async connectSSE() {
+    if (!this.config.url) {
+      throw new Error('SSE transport requires a URL');
+    }
+
+    const url = new URL(this.config.url);
+    const options = {};
+
+    // Add authentication if provided
+    if (this.config.authProvider) {
+      options.authProvider = this.config.authProvider;
+    }
+
+    // Add custom headers if provided
+    if (this.config.headers) {
+      const expandedHeaders = {};
+      for (const [key, value] of Object.entries(this.config.headers)) {
+        expandedHeaders[key] = value.replace(/\$\{(\w+)\}/g, (match, envVar) => {
+          return process.env[envVar] || match;
+        });
+      }
+      options.eventSourceInit = {
+        headers: expandedHeaders
+      };
+    }
+
+    // Add custom request init if provided
+    if (this.config.requestInit) {
+      options.requestInit = this.config.requestInit;
+    }
+
+    this.transport = new SSEClientTransport(url, options);
+
+    // Set up error handling
+    this.transport.onerror = (error) => {
+      console.error(`SSE transport error for ${this.name}:`, error);
+      this.handleDisconnect();
+    };
+
+    this.transport.onclose = () => {
+      this.handleDisconnect();
+    };
+
+    this.client = new Client({
+      name: `ronin-${this.name}`,
+      version: '1.0.0'
+    }, {
+      capabilities: {}
+    });
+
+    await this.client.connect(this.transport);
+  }
+
+  async connectWebSocket() {
+    if (!this.config.url) {
+      throw new Error('WebSocket transport requires a URL');
+    }
+
+    const url = new URL(this.config.url);
+
+    // Ensure WebSocket protocol
+    if (url.protocol === 'http:') {
+      url.protocol = 'ws:';
+    } else if (url.protocol === 'https:') {
+      url.protocol = 'wss:';
+    }
+
+    this.transport = new WebSocketClientTransport(url);
+
+    // Set up error handling
+    this.transport.onerror = (error) => {
+      console.error(`WebSocket transport error for ${this.name}:`, error);
+      this.handleDisconnect();
+    };
+
+    this.transport.onclose = () => {
+      this.handleDisconnect();
+    };
 
     this.client = new Client({
       name: `ronin-${this.name}`,
