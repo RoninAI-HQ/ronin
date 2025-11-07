@@ -8,26 +8,82 @@ export class MCPManager extends EventEmitter {
     this.configService = configService;
     this.servers = new Map();
     this.tools = new Map();
+    this.serverStatus = new Map(); // Track connection status and errors
+    this.disabledServers = new Set(); // Track manually disabled servers
     this.initialized = false;
   }
 
   async initialize() {
-    if (this.initialized) return;
+    if (this.initialized) return this.getInitializationResult();
 
     const mcpConfig = this.configService.getMCPConfig();
     if (!mcpConfig || !mcpConfig.servers) {
-      return;
+      this.initialized = true;
+      return { success: 0, failed: 0, errors: [] };
     }
 
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: []
+    };
+
     for (const [name, config] of Object.entries(mcpConfig.servers)) {
+      // Skip disabled servers
+      if (this.disabledServers.has(name) || config.enabled === false) {
+        this.serverStatus.set(name, {
+          connected: false,
+          disabled: true,
+          error: null
+        });
+        continue;
+      }
+
       try {
         await this.connectServer(name, config);
+        results.success++;
+        this.serverStatus.set(name, {
+          connected: true,
+          disabled: false,
+          error: null,
+          connectedAt: new Date()
+        });
       } catch (error) {
-        // Failed to connect to server
+        results.failed++;
+        results.errors.push({
+          server: name,
+          error: error.message,
+          config: config
+        });
+        this.serverStatus.set(name, {
+          connected: false,
+          disabled: false,
+          error: error.message,
+          failedAt: new Date()
+        });
+        this.emit('server:connection-failed', { name, error });
       }
     }
 
     this.initialized = true;
+    return results;
+  }
+
+  getInitializationResult() {
+    const success = Array.from(this.serverStatus.values()).filter(s => s.connected).length;
+    const failed = Array.from(this.serverStatus.values()).filter(s => !s.connected && !s.disabled).length;
+    const errors = [];
+
+    for (const [name, status] of this.serverStatus.entries()) {
+      if (!status.connected && !status.disabled && status.error) {
+        errors.push({
+          server: name,
+          error: status.error
+        });
+      }
+    }
+
+    return { success, failed, errors };
   }
 
   async connectServer(name, config) {
@@ -63,12 +119,17 @@ export class MCPManager extends EventEmitter {
 
   async disconnectServer(name) {
     const server = this.servers.get(name);
-    if (!server) return;
+    if (!server) {
+      throw new Error(`Server '${name}' not found`);
+    }
+
+    const toolCount = Array.from(this.tools.values()).filter(t => t.server === name).length;
 
     try {
       await server.disconnect();
     } catch (error) {
-      // Error disconnecting server
+      // Log error but continue cleanup
+      this.emit('server:disconnect-error', { name, error });
     }
 
     for (const [toolName, tool] of this.tools.entries()) {
@@ -78,7 +139,10 @@ export class MCPManager extends EventEmitter {
     }
 
     this.servers.delete(name);
-    this.emit('server:disconnected', { name });
+    this.serverStatus.delete(name);
+    this.emit('server:disconnected', { name, toolCount });
+
+    return { toolCount };
   }
 
   async executeTool(toolName, args) {
@@ -124,12 +188,131 @@ export class MCPManager extends EventEmitter {
       try {
         await server.disconnect();
       } catch (error) {
-        this.emit('tool:error', { toolName, args, error });
-        throw error;
+        this.emit('server:shutdown-error', { name, error });
       }
     }
     this.servers.clear();
     this.tools.clear();
+    this.serverStatus.clear();
     this.initialized = false;
+  }
+
+  /**
+   * Get detailed information about a server
+   * @param {string} name - Server name
+   * @returns {object|null} Server information
+   */
+  getServerInfo(name) {
+    const server = this.servers.get(name);
+    const status = this.serverStatus.get(name);
+
+    if (!server && !status) {
+      return null;
+    }
+
+    const tools = Array.from(this.tools.values()).filter(t => t.server === name);
+    const mcpConfig = this.configService.getMCPConfig();
+    const config = mcpConfig?.servers?.[name];
+
+    return {
+      name,
+      connected: !!server,
+      disabled: status?.disabled || false,
+      error: status?.error || null,
+      connectedAt: status?.connectedAt || null,
+      failedAt: status?.failedAt || null,
+      toolCount: tools.length,
+      tools: tools.map(t => ({
+        name: t.name,
+        description: t.description
+      })),
+      config: config || null,
+      transport: config?.transport || 'stdio'
+    };
+  }
+
+  /**
+   * Get status of all servers
+   * @returns {Array} Array of server statuses
+   */
+  getAllServerInfo() {
+    const mcpConfig = this.configService.getMCPConfig();
+    const allServers = mcpConfig?.servers ? Object.keys(mcpConfig.servers) : [];
+
+    return allServers.map(name => this.getServerInfo(name)).filter(Boolean);
+  }
+
+  /**
+   * Enable a disabled server
+   * @param {string} name - Server name
+   */
+  enableServer(name) {
+    this.disabledServers.delete(name);
+    const status = this.serverStatus.get(name);
+    if (status) {
+      status.disabled = false;
+    }
+  }
+
+  /**
+   * Disable a server
+   * @param {string} name - Server name
+   */
+  async disableServer(name) {
+    this.disabledServers.add(name);
+
+    // Disconnect if currently connected
+    if (this.servers.has(name)) {
+      await this.disconnectServer(name);
+    }
+
+    const status = this.serverStatus.get(name);
+    if (status) {
+      status.disabled = true;
+    } else {
+      this.serverStatus.set(name, {
+        connected: false,
+        disabled: true,
+        error: null
+      });
+    }
+  }
+
+  /**
+   * Test connection to a server
+   * @param {string} name - Server name
+   * @param {object} config - Server configuration
+   * @returns {Promise<object>} Test result
+   */
+  async testServerConnection(name, config) {
+    try {
+      let testServer;
+
+      if (name === 'builtin') {
+        testServer = new BuiltInServer(config);
+        await testServer.initialize();
+      } else if (config.command || config.url) {
+        testServer = new MCPClient(name, config);
+        await testServer.connect();
+      } else {
+        throw new Error('Invalid server configuration');
+      }
+
+      const tools = await testServer.listTools();
+
+      // Disconnect test server
+      await testServer.disconnect();
+
+      return {
+        success: true,
+        toolCount: tools.length,
+        tools: tools.map(t => ({ name: t.name, description: t.description }))
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
 }

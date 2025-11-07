@@ -2,6 +2,14 @@ import { PermissionCache } from './PermissionCache.js';
 import { getLLMProviderManager } from '../api.js';
 import { inlineLLMCommands } from './CommandServiceExtensions.js';
 import chalk from 'chalk';
+import {
+  validateUrl,
+  validateJson,
+  validateServerName,
+  validateCommand,
+  validateEnvVars,
+  parseShellArgs
+} from '../utils/validators.js';
 
 export class CommandService {
   constructor(fileService, conversationService, mcpManager = null, configService = null) {
@@ -73,11 +81,16 @@ Permission management:
   /permissions always  - Enable/disable always-ask mode.
 
 MCP server management:
-  /mcp                 - Manage MCP servers.
-  /mcp list            - List connected MCP servers.
-  /mcp add             - Add a new MCP server.
-  /mcp remove [name]   - Remove an MCP server.
-  /mcp reload          - Reload MCP configuration.
+  /mcp                 - Show MCP commands help
+  /mcp list            - List all servers with status
+  /mcp info [name]     - Show detailed server information
+  /mcp add             - Add new server (interactive)
+  /mcp edit [name]     - Edit server configuration
+  /mcp remove [name]   - Remove server (with confirmation)
+  /mcp test [name]     - Test server connection
+  /mcp enable [name]   - Enable disabled server
+  /mcp disable [name]  - Temporarily disable server
+  /mcp reload          - Reload configuration from disk
 
 LLM Provider commands (current: ${currentProvider}):
   /provider      - Show current LLM provider.
@@ -398,9 +411,16 @@ LLM Provider commands (current: ${currentProvider}):
         type: 'info',
         message: `MCP server management commands:
   /mcp list            - List connected MCP servers and their tools
+  /mcp info [name]     - Show detailed information about a server
   /mcp add             - Add a new MCP server interactively
-  /mcp remove [name]   - Remove an MCP server
-  /mcp reload          - Reload MCP configuration from mcp.json`
+  /mcp edit [name]     - Edit an existing server configuration
+  /mcp remove [name]   - Remove an MCP server (with confirmation)
+  /mcp enable [name]   - Enable a disabled server
+  /mcp disable [name]  - Disable a server temporarily
+  /mcp test [name]     - Test connection to a configured server
+  /mcp reload          - Reload MCP configuration from mcp.json
+
+For more information, see: MCP_GUIDE.md`
       };
     }
 
@@ -408,191 +428,603 @@ LLM Provider commands (current: ${currentProvider}):
 
     switch (subcommand.toLowerCase()) {
       case 'list':
-        const servers = this.mcpManager.getServers();
-        const tools = this.mcpManager.getAvailableTools();
+        return await this.mcpList();
 
-        if (servers.length === 0) {
-          return {
-            type: 'info',
-            message: 'No MCP servers connected.'
-          };
-        }
-
-        let message = `Connected MCP servers (${servers.length}):\n`;
-        for (const serverName of servers) {
-          const serverTools = tools.filter(t => t.server === serverName);
-          message += `\n  ${serverName} (${serverTools.length} tools)`;
-          if (serverTools.length > 0) {
-            message += ':\n';
-            for (const tool of serverTools) {
-              message += `    - ${tool.name}: ${tool.description || 'No description'}\n`;
-            }
-          }
-        }
-        return {
-          type: 'info',
-          message
-        };
+      case 'info':
+        return await this.mcpInfo(subargs[0]);
 
       case 'add':
-        try {
-          const newServer = await this.interactiveMCPServerAdd();
-          if (newServer) {
-            // Update configuration
-            const config = this.configService.getMCPConfig();
-            if (!config.servers) {
-              config.servers = {};
-            }
-            config.servers[newServer.name] = newServer.config;
-            this.configService.saveMCPConfig(config);
+        return await this.mcpAdd();
 
-            // Connect to the new server
-            await this.mcpManager.connectServer(newServer.name, newServer.config);
-
-            return {
-              type: 'success',
-              message: `MCP server '${newServer.name}' has been added and connected.`
-            };
-          } else {
-            return {
-              type: 'info',
-              message: 'MCP server addition cancelled.'
-            };
-          }
-        } catch (error) {
-          return {
-            type: 'error',
-            message: `Failed to add MCP server: ${error.message}`
-          };
-        }
+      case 'edit':
+        return await this.mcpEdit(subargs[0]);
 
       case 'remove':
-        const serverName = subargs[0];
-        if (!serverName) {
-          return {
-            type: 'error',
-            message: 'Usage: /mcp remove [server-name]'
-          };
-        }
+        return await this.mcpRemove(subargs[0]);
 
-        try {
-          await this.mcpManager.disconnectServer(serverName);
+      case 'enable':
+        return await this.mcpEnable(subargs[0]);
 
-          // Update configuration file
-          if (this.configService) {
-            const config = this.configService.getMCPConfig();
-            if (config && config.servers && config.servers[serverName]) {
-              delete config.servers[serverName];
-              this.configService.saveMCPConfig(config);
-            }
-          }
+      case 'disable':
+        return await this.mcpDisable(subargs[0]);
 
-          return {
-            type: 'success',
-            message: `MCP server '${serverName}' has been removed.`
-          };
-        } catch (error) {
-          return {
-            type: 'error',
-            message: `Failed to remove server: ${error.message}`
-          };
-        }
+      case 'test':
+        return await this.mcpTest(subargs[0]);
 
       case 'reload':
-        try {
-          // Shutdown existing connections
-          await this.mcpManager.shutdown();
-
-          // Reload configuration and reinitialize
-          if (this.configService) {
-            this.configService.reloadMCPConfig();
-          }
-          await this.mcpManager.initialize();
-
-          const servers = this.mcpManager.getServers();
-          return {
-            type: 'success',
-            message: `MCP configuration reloaded. ${servers.length} server(s) connected.`
-          };
-        } catch (error) {
-          return {
-            type: 'error',
-            message: `Failed to reload MCP configuration: ${error.message}`
-          };
-        }
+        return await this.mcpReload();
 
       default:
         return {
           type: 'error',
-          message: `Unknown MCP subcommand: ${subcommand}`
+          message: `Unknown MCP subcommand: ${subcommand}\nUse "/mcp" to see available commands.`
         };
     }
   }
 
-  async interactiveMCPServerAdd() {
+  async mcpList() {
+    const allServers = this.mcpManager.getAllServerInfo();
+    const tools = this.mcpManager.getAvailableTools();
+    const totalTools = tools.length;
+
+    if (allServers.length === 0) {
+      return {
+        type: 'info',
+        message: 'No MCP servers configured.\n\nUse "/mcp add" to add a server.'
+      };
+    }
+
+    const connected = allServers.filter(s => s.connected);
+    const failed = allServers.filter(s => !s.connected && !s.disabled && s.error);
+    const disabled = allServers.filter(s => s.disabled);
+
+    let message = `MCP Servers (${allServers.length} total, ${totalTools} tools):\n`;
+
+    // Connected servers
+    if (connected.length > 0) {
+      message += `\n${chalk.green('✓ Connected')} (${connected.length}):\n`;
+      for (const server of connected) {
+        message += `  ${server.name} (${server.toolCount} tools)\n`;
+        if (server.toolCount > 0 && server.toolCount <= 10) {
+          for (const tool of server.tools) {
+            message += chalk.gray(`    - ${tool.name}: ${tool.description || 'No description'}\n`);
+          }
+        } else if (server.toolCount > 10) {
+          for (const tool of server.tools.slice(0, 5)) {
+            message += chalk.gray(`    - ${tool.name}: ${tool.description || 'No description'}\n`);
+          }
+          message += chalk.gray(`    ... and ${server.toolCount - 5} more tools\n`);
+        }
+      }
+    }
+
+    // Failed servers
+    if (failed.length > 0) {
+      message += `\n${chalk.red('✗ Failed')} (${failed.length}):\n`;
+      for (const server of failed) {
+        message += `  ${server.name} - ${chalk.red(server.error)}\n`;
+      }
+    }
+
+    // Disabled servers
+    if (disabled.length > 0) {
+      message += `\n${chalk.yellow('⊘ Disabled')} (${disabled.length}):\n`;
+      for (const server of disabled) {
+        message += `  ${server.name}\n`;
+      }
+    }
+
+    return { type: 'info', message };
+  }
+
+  async mcpInfo(name) {
+    if (!name) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp info [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(name);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${name}' not found.`
+      };
+    }
+
+    let message = `${chalk.cyan('=== Server Information ===')}\n\n`;
+    message += `Name: ${info.name}\n`;
+    message += `Status: ${info.connected ? chalk.green('✓ Connected') : info.disabled ? chalk.yellow('⊘ Disabled') : chalk.red('✗ Disconnected')}\n`;
+    message += `Transport: ${info.transport}\n`;
+    message += `Tools: ${info.toolCount}\n`;
+
+    if (info.connectedAt) {
+      message += `Connected: ${info.connectedAt.toLocaleString()}\n`;
+    }
+
+    if (info.error) {
+      message += `${chalk.red('Error:')} ${info.error}\n`;
+      if (info.failedAt) {
+        message += `Failed: ${info.failedAt.toLocaleString()}\n`;
+      }
+    }
+
+    if (info.config) {
+      message += `\n${chalk.cyan('Configuration:')}\n`;
+      message += JSON.stringify(info.config, null, 2);
+    }
+
+    if (info.tools.length > 0) {
+      message += `\n\n${chalk.cyan('Available Tools:')}\n`;
+      for (const tool of info.tools) {
+        message += `  - ${tool.name}: ${tool.description || 'No description'}\n`;
+      }
+    }
+
+    return { type: 'info', message };
+  }
+
+  async mcpAdd() {
+    try {
+      const newServer = await this.interactiveMCPServerAdd();
+      if (!newServer) {
+        return {
+          type: 'info',
+          message: 'MCP server addition cancelled.'
+        };
+      }
+
+      if (newServer.error) {
+        return {
+          type: 'error',
+          message: newServer.error
+        };
+      }
+
+      // Update configuration
+      const config = this.configService.getMCPConfig();
+      if (!config.servers) {
+        config.servers = {};
+      }
+      config.servers[newServer.name] = newServer.config;
+      this.configService.saveMCPConfig(config);
+
+      // Connect to the new server
+      try {
+        await this.mcpManager.connectServer(newServer.name, newServer.config);
+        const info = this.mcpManager.getServerInfo(newServer.name);
+
+        return {
+          type: 'success',
+          message: `${chalk.green('✓')} MCP server '${newServer.name}' added successfully.`,
+          additionalMessage: `Connected with ${info.toolCount} tools available.`
+        };
+      } catch (error) {
+        return {
+          type: 'error',
+          message: `Server added to configuration but failed to connect: ${error.message}`,
+          additionalMessage: 'Use "/mcp test ${newServer.name}" to diagnose the issue.'
+        };
+      }
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to add MCP server: ${error.message}`
+      };
+    }
+  }
+
+  async mcpEdit(name) {
+    if (!name) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp edit [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(name);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${name}' not found.`
+      };
+    }
+
+    try {
+      const updatedServer = await this.interactiveMCPServerAdd(info.config, name);
+      if (!updatedServer) {
+        return {
+          type: 'info',
+          message: 'Edit cancelled.'
+        };
+      }
+
+      if (updatedServer.error) {
+        return {
+          type: 'error',
+          message: updatedServer.error
+        };
+      }
+
+      // Update configuration
+      const config = this.configService.getMCPConfig();
+      config.servers[name] = updatedServer.config;
+      this.configService.saveMCPConfig(config);
+
+      // Reconnect if it was connected
+      if (info.connected) {
+        try {
+          await this.mcpManager.disconnectServer(name);
+          await this.mcpManager.connectServer(name, updatedServer.config);
+        } catch (error) {
+          return {
+            type: 'error',
+            message: `Configuration updated but failed to reconnect: ${error.message}`
+          };
+        }
+      }
+
+      return {
+        type: 'success',
+        message: `Server '${name}' configuration updated successfully.`
+      };
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to edit server: ${error.message}`
+      };
+    }
+  }
+
+  async mcpRemove(serverName) {
+    if (!serverName) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp remove [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(serverName);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${serverName}' not found.`
+      };
+    }
+
+    // Ask for confirmation
+    if (this.conversationService?.cliInterface) {
+      const toolCount = info.toolCount;
+      const confirmMsg = `Remove server '${serverName}' and its ${toolCount} tool(s)?`;
+      const confirmed = await this.conversationService.cliInterface.askConfirmation(confirmMsg);
+
+      if (!confirmed) {
+        return {
+          type: 'info',
+          message: 'Removal cancelled.'
+        };
+      }
+    }
+
+    try {
+      const result = await this.mcpManager.disconnectServer(serverName);
+
+      // Update configuration file
+      if (this.configService) {
+        const config = this.configService.getMCPConfig();
+        if (config?.servers?.[serverName]) {
+          delete config.servers[serverName];
+          this.configService.saveMCPConfig(config);
+        }
+      }
+
+      return {
+        type: 'success',
+        message: `${chalk.green('✓')} Server '${serverName}' removed successfully.`,
+        additionalMessage: `Removed ${result.toolCount} tool(s).`
+      };
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to remove server: ${error.message}`
+      };
+    }
+  }
+
+  async mcpEnable(name) {
+    if (!name) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp enable [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(name);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${name}' not found.`
+      };
+    }
+
+    if (info.connected) {
+      return {
+        type: 'info',
+        message: `Server '${name}' is already connected.`
+      };
+    }
+
+    if (!info.disabled) {
+      return {
+        type: 'info',
+        message: `Server '${name}' is not disabled.`
+      };
+    }
+
+    try {
+      this.mcpManager.enableServer(name);
+      await this.mcpManager.connectServer(name, info.config);
+
+      const updatedInfo = this.mcpManager.getServerInfo(name);
+      return {
+        type: 'success',
+        message: `${chalk.green('✓')} Server '${name}' enabled and connected.`,
+        additionalMessage: `${updatedInfo.toolCount} tool(s) now available.`
+      };
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to enable server: ${error.message}`
+      };
+    }
+  }
+
+  async mcpDisable(name) {
+    if (!name) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp disable [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(name);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${name}' not found.`
+      };
+    }
+
+    if (info.disabled) {
+      return {
+        type: 'info',
+        message: `Server '${name}' is already disabled.`
+      };
+    }
+
+    try {
+      await this.mcpManager.disableServer(name);
+      return {
+        type: 'success',
+        message: `${chalk.green('✓')} Server '${name}' disabled.`,
+        additionalMessage: 'Use "/mcp enable ${name}" to re-enable.'
+      };
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to disable server: ${error.message}`
+      };
+    }
+  }
+
+  async mcpTest(name) {
+    if (!name) {
+      return {
+        type: 'error',
+        message: 'Usage: /mcp test [server-name]'
+      };
+    }
+
+    const info = this.mcpManager.getServerInfo(name);
+    if (!info) {
+      return {
+        type: 'error',
+        message: `Server '${name}' not found in configuration.`
+      };
+    }
+
+    try {
+      console.log(chalk.cyan(`Testing connection to '${name}'...`));
+      const result = await this.mcpManager.testServerConnection(name, info.config);
+
+      if (result.success) {
+        let message = `${chalk.green('✓')} Connection test successful!\n`;
+        message += `Found ${result.toolCount} tool(s):\n`;
+        for (const tool of result.tools.slice(0, 10)) {
+          message += `  - ${tool.name}: ${tool.description || 'No description'}\n`;
+        }
+        if (result.tools.length > 10) {
+          message += `  ... and ${result.tools.length - 10} more\n`;
+        }
+        return {
+          type: 'success',
+          message
+        };
+      } else {
+        return {
+          type: 'error',
+          message: `${chalk.red('✗')} Connection test failed: ${result.error}`
+        };
+      }
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Test failed: ${error.message}`
+      };
+    }
+  }
+
+  async mcpReload() {
+    try {
+      // Get current state for comparison
+      const oldServers = this.mcpManager.getServers();
+      const oldConfig = this.configService.getMCPConfig();
+
+      // Reload configuration
+      this.configService.reloadMCPConfig();
+      const newConfig = this.configService.getMCPConfig();
+
+      // Find differences
+      const oldServerNames = new Set(oldServers);
+      const newServerNames = new Set(Object.keys(newConfig?.servers || {}));
+
+      const added = [...newServerNames].filter(n => !oldServerNames.has(n));
+      const removed = [...oldServerNames].filter(n => !newServerNames.has(n));
+      const existing = [...newServerNames].filter(n => oldServerNames.has(n));
+
+      // Show what will change
+      let changeMsg = 'Reloading MCP configuration...\n\n';
+      if (added.length > 0) {
+        changeMsg += chalk.green(`  Adding: ${added.join(', ')}\n`);
+      }
+      if (removed.length > 0) {
+        changeMsg += chalk.red(`  Removing: ${removed.join(', ')}\n`);
+      }
+      if (existing.length > 0) {
+        changeMsg += chalk.yellow(`  Existing: ${existing.length} server(s)\n`);
+      }
+
+      console.log(changeMsg);
+
+      // Reinitialize
+      await this.mcpManager.shutdown();
+      const result = await this.mcpManager.initialize();
+
+      let message = `${chalk.green('✓')} MCP configuration reloaded.\n\n`;
+      message += `Connected: ${result.success} server(s)\n`;
+
+      if (result.failed > 0) {
+        message += chalk.red(`Failed: ${result.failed} server(s)\n`);
+        if (result.errors.length > 0) {
+          message += '\nErrors:\n';
+          for (const err of result.errors) {
+            message += `  - ${err.server}: ${err.error}\n`;
+          }
+        }
+      }
+
+      if (added.length > 0) {
+        message += chalk.green(`\nAdded: ${added.join(', ')}\n`);
+      }
+      if (removed.length > 0) {
+        message += chalk.red(`\nRemoved: ${removed.join(', ')}\n`);
+      }
+
+      return {
+        type: result.failed > 0 ? 'warning' : 'success',
+        message
+      };
+    } catch (error) {
+      return {
+        type: 'error',
+        message: `Failed to reload MCP configuration: ${error.message}`
+      };
+    }
+  }
+
+  async interactiveMCPServerAdd(existingConfig = null, existingName = null) {
     if (!this.conversationService || !this.conversationService.cliInterface) {
       throw new Error('CLI interface not available for interactive configuration');
     }
 
     const cli = this.conversationService.cliInterface;
+    const isEdit = !!existingName;
 
-    console.log(chalk.cyan('\n=== Interactive MCP Server Configuration ==='));
+    console.log(chalk.cyan(`\n=== ${isEdit ? 'Edit' : 'Add'} MCP Server Configuration ===`));
 
-    // Get server name
-    const name = await cli.getUserInput('Server name: ');
-    if (!name.trim()) {
-      console.log(chalk.red('Server name is required.'));
-      return null;
-    }
+    // Get server name (skip if editing)
+    let name = existingName;
+    if (!isEdit) {
+      while (true) {
+        name = await cli.getUserInput('Server name: ');
+        const nameValidation = validateServerName(name);
 
-    // Check if server already exists
-    const existing = this.mcpManager.getServers();
-    if (existing.includes(name)) {
-      console.log(chalk.red(`Server '${name}' already exists.`));
-      return null;
+        if (!nameValidation.valid) {
+          console.log(chalk.red(nameValidation.error));
+          continue;
+        }
+
+        // Check if server already exists
+        const existing = this.mcpManager.getServers();
+        if (existing.includes(name)) {
+          console.log(chalk.red(`Server '${name}' already exists. Use "/mcp edit ${name}" to edit it.`));
+          continue;
+        }
+
+        break;
+      }
+    } else {
+      console.log(`Editing server: ${chalk.cyan(name)}`);
     }
 
     // Get transport type
     console.log('\nTransport options:');
-    console.log('  1. stdio (Standard Input/Output)');
-    console.log('  2. sse (Server-Sent Events)');
-    console.log('  3. websocket (WebSocket)');
+    console.log('  1. stdio (Standard Input/Output) - for local processes');
+    console.log('  2. sse (Server-Sent Events) - for HTTP-based servers');
+    console.log('  3. websocket (WebSocket) - for real-time connections');
 
-    const transportChoice = await cli.getUserInput('Select transport (1-3): ');
-
-    let transport, config = {};
-
-    switch (transportChoice.trim()) {
-      case '1':
-        transport = 'stdio';
-        config = await this.configureStdioTransport(cli);
-        break;
-      case '2':
-        transport = 'sse';
-        config = await this.configureSSETransport(cli);
-        break;
-      case '3':
-        transport = 'websocket';
-        config = await this.configureWebSocketTransport(cli);
-        break;
-      default:
-        console.log(chalk.red('Invalid transport selection.'));
-        return null;
+    if (existingConfig) {
+      const currentTransport = existingConfig.transport || 'stdio';
+      console.log(chalk.gray(`\nCurrent transport: ${currentTransport}`));
     }
 
-    if (!config) {
-      return null;
+    let transport, config = {};
+    let transportChoice;
+
+    while (true) {
+      transportChoice = await cli.getUserInput('Select transport (1-3): ');
+
+      switch (transportChoice.trim()) {
+        case '1':
+          transport = 'stdio';
+          config = await this.configureStdioTransport(cli, existingConfig);
+          break;
+        case '2':
+          transport = 'sse';
+          config = await this.configureSSETransport(cli, existingConfig);
+          break;
+        case '3':
+          transport = 'websocket';
+          config = await this.configureWebSocketTransport(cli, existingConfig);
+          break;
+        default:
+          console.log(chalk.red('Invalid transport selection. Please enter 1, 2, or 3.'));
+          continue;
+      }
+
+      if (config && config.error) {
+        console.log(chalk.red(config.error));
+        return { error: config.error };
+      }
+
+      if (!config) {
+        return null; // User cancelled
+      }
+
+      break;
     }
 
     config.transport = transport;
 
     // Confirm configuration
     console.log(chalk.cyan('\n=== Configuration Summary ==='));
-    console.log(`Name: ${name}`);
-    console.log(`Transport: ${transport}`);
-    console.log(`Configuration: ${JSON.stringify(config, null, 2)}`);
+    console.log(`Name: ${chalk.green(name)}`);
+    console.log(`Transport: ${chalk.green(transport)}`);
+    console.log(`\nConfiguration:`);
+    console.log(JSON.stringify(config, null, 2));
 
-    const confirmed = await cli.askConfirmation('Add this MCP server?');
+    const confirmed = await cli.askConfirmation(`${isEdit ? 'Save' : 'Add'} this MCP server?`);
     if (!confirmed) {
       return null;
     }
@@ -600,28 +1032,71 @@ LLM Provider commands (current: ${currentProvider}):
     return { name, config };
   }
 
-  async configureStdioTransport(cli) {
-    const command = await cli.getUserInput('Command to run: ');
-    if (!command.trim()) {
-      console.log(chalk.red('Command is required for stdio transport.'));
-      return null;
+  async configureStdioTransport(cli, existingConfig = null) {
+    console.log(chalk.gray('\nConfiguring stdio transport...'));
+    console.log(chalk.gray('Example: command="docker", args=["run", "-i", "my-image"]'));
+
+    // Command
+    let command;
+    while (true) {
+      const defaultCmd = existingConfig?.command || '';
+      const prompt = defaultCmd ? `Command to run [${defaultCmd}]: ` : 'Command to run: ';
+      command = await cli.getUserInput(prompt);
+
+      if (!command && defaultCmd) {
+        command = defaultCmd;
+      }
+
+      const cmdValidation = validateCommand(command);
+      if (!cmdValidation.valid) {
+        console.log(chalk.red(cmdValidation.error));
+        continue;
+      }
+
+      break;
     }
 
-    const argsInput = await cli.getUserInput('Arguments (space-separated, optional): ');
-    const args = argsInput.trim() ? argsInput.trim().split(' ') : [];
+    // Arguments
+    console.log(chalk.gray('\nArguments can include spaces if quoted, e.g.: arg1 "arg with spaces" arg3'));
+    const defaultArgs = existingConfig?.args ? existingConfig.args.join(' ') : '';
+    const argsPrompt = defaultArgs ? `Arguments [${defaultArgs}]: ` : 'Arguments (optional): ';
+    const argsInput = await cli.getUserInput(argsPrompt);
 
-    const cwdInput = await cli.getUserInput('Working directory (optional): ');
+    const argsToUse = argsInput || defaultArgs;
+    const args = argsToUse ? parseShellArgs(argsToUse) : [];
+
+    // Working directory
+    const defaultCwd = existingConfig?.cwd || '';
+    const cwdPrompt = defaultCwd ? `Working directory [${defaultCwd}]: ` : 'Working directory (optional): ';
+    let cwdInput = await cli.getUserInput(cwdPrompt);
+    if (!cwdInput && defaultCwd) {
+      cwdInput = defaultCwd;
+    }
     const cwd = cwdInput.trim() || undefined;
 
-    const envInput = await cli.getUserInput('Environment variables (JSON format, optional): ');
+    // Environment variables
+    console.log(chalk.gray('\nEnvironment variables in JSON format, e.g.: {"API_KEY": "${MY_API_KEY}"}'));
+    const defaultEnv = existingConfig?.env ? JSON.stringify(existingConfig.env) : '';
+    const envPrompt = defaultEnv ? `Environment variables [${defaultEnv}]: ` : 'Environment variables (optional): ';
+    const envInput = await cli.getUserInput(envPrompt);
+
+    const envToUse = envInput || defaultEnv;
     let env = undefined;
-    if (envInput.trim()) {
-      try {
-        env = JSON.parse(envInput);
-      } catch (error) {
-        console.log(chalk.red('Invalid JSON for environment variables.'));
-        return null;
+
+    if (envToUse) {
+      const envValidation = validateJson(envToUse);
+      if (!envValidation.valid) {
+        console.log(chalk.red(envValidation.error));
+        return { error: envValidation.error };
       }
+
+      const envVarValidation = validateEnvVars(envValidation.parsed);
+      if (!envVarValidation.valid) {
+        console.log(chalk.red(envVarValidation.error));
+        return { error: envVarValidation.error };
+      }
+
+      env = envValidation.parsed;
     }
 
     const config = { command, args };
@@ -631,22 +1106,54 @@ LLM Provider commands (current: ${currentProvider}):
     return config;
   }
 
-  async configureSSETransport(cli) {
-    const url = await cli.getUserInput('Server URL: ');
-    if (!url.trim()) {
-      console.log(chalk.red('URL is required for SSE transport.'));
-      return null;
+  async configureSSETransport(cli, existingConfig = null) {
+    console.log(chalk.gray('\nConfiguring SSE (Server-Sent Events) transport...'));
+    console.log(chalk.gray('Example: https://api.example.com/mcp'));
+
+    // URL
+    let url;
+    while (true) {
+      const defaultUrl = existingConfig?.url || '';
+      const prompt = defaultUrl ? `Server URL [${defaultUrl}]: ` : 'Server URL: ';
+      url = await cli.getUserInput(prompt);
+
+      if (!url && defaultUrl) {
+        url = defaultUrl;
+      }
+
+      const urlValidation = validateUrl(url, {
+        allowedProtocols: ['http', 'https']
+      });
+
+      if (!urlValidation.valid) {
+        console.log(chalk.red(urlValidation.error));
+        continue;
+      }
+
+      if (urlValidation.warning) {
+        console.log(chalk.yellow(urlValidation.warning));
+      }
+
+      url = urlValidation.normalized;
+      break;
     }
 
-    const headersInput = await cli.getUserInput('Headers (JSON format, optional): ');
+    // Headers
+    console.log(chalk.gray('\nHeaders in JSON format, e.g.: {"Authorization": "Bearer ${TOKEN}"}'));
+    const defaultHeaders = existingConfig?.headers ? JSON.stringify(existingConfig.headers) : '';
+    const headersPrompt = defaultHeaders ? `Headers [${defaultHeaders}]: ` : 'Headers (optional): ';
+    const headersInput = await cli.getUserInput(headersPrompt);
+
+    const headersToUse = headersInput || defaultHeaders;
     let headers = undefined;
-    if (headersInput.trim()) {
-      try {
-        headers = JSON.parse(headersInput);
-      } catch (error) {
-        console.log(chalk.red('Invalid JSON for headers.'));
-        return null;
+
+    if (headersToUse) {
+      const headersValidation = validateJson(headersToUse);
+      if (!headersValidation.valid) {
+        console.log(chalk.red(headersValidation.error));
+        return { error: headersValidation.error };
       }
+      headers = headersValidation.parsed;
     }
 
     const config = { url };
@@ -655,11 +1162,42 @@ LLM Provider commands (current: ${currentProvider}):
     return config;
   }
 
-  async configureWebSocketTransport(cli) {
-    const url = await cli.getUserInput('WebSocket URL: ');
-    if (!url.trim()) {
-      console.log(chalk.red('URL is required for WebSocket transport.'));
-      return null;
+  async configureWebSocketTransport(cli, existingConfig = null) {
+    console.log(chalk.gray('\nConfiguring WebSocket transport...'));
+    console.log(chalk.gray('Example: ws://localhost:8080/mcp or wss://api.example.com/mcp'));
+
+    // URL
+    let url;
+    while (true) {
+      const defaultUrl = existingConfig?.url || '';
+      const prompt = defaultUrl ? `WebSocket URL [${defaultUrl}]: ` : 'WebSocket URL: ';
+      url = await cli.getUserInput(prompt);
+
+      if (!url && defaultUrl) {
+        url = defaultUrl;
+      }
+
+      const urlValidation = validateUrl(url, {
+        allowedProtocols: ['ws', 'wss', 'http', 'https']
+      });
+
+      if (!urlValidation.valid) {
+        console.log(chalk.red(urlValidation.error));
+        continue;
+      }
+
+      // Auto-convert http(s) to ws(s)
+      if (urlValidation.normalized.startsWith('http://')) {
+        url = urlValidation.normalized.replace('http://', 'ws://');
+        console.log(chalk.yellow(`Converted to WebSocket protocol: ${url}`));
+      } else if (urlValidation.normalized.startsWith('https://')) {
+        url = urlValidation.normalized.replace('https://', 'wss://');
+        console.log(chalk.yellow(`Converted to secure WebSocket protocol: ${url}`));
+      } else {
+        url = urlValidation.normalized;
+      }
+
+      break;
     }
 
     return { url };
