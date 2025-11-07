@@ -1,5 +1,7 @@
 # Ronin CLI
 
+WE"VE ADDED MCP SUPPORT
+
 A command-line interface for interacting with Anthropic's Claude API. Supports both interactive chat mode and one-shot queries.
 
 ## Prerequisites
