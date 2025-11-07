@@ -7,6 +7,7 @@ import { ConfigService } from './services/ConfigService.js';
 import { MCPManager } from './services/MCPManager.js';
 import { UIController } from './ui/UIController.js';
 import { CLIInterface } from './ui/CLIInterface.js';
+import { initializeLLMProvider } from './api.js';
 
 class RoninCLI {
   constructor() {
@@ -22,6 +23,21 @@ class RoninCLI {
   async initialize() {
     try {
       this.configService.loadConfig();
+
+      // Pass config service to command service
+      this.commandService.setConfigService(this.configService);
+
+      // Initialize LLM Provider
+      const llmConfig = this.configService.getLLMConfig();
+      try {
+        await initializeLLMProvider(llmConfig);
+      } catch (llmError) {
+        // Failed to initialize provider
+        if (llmConfig.provider === 'ollama') {
+          // Falling back to Anthropic provider
+          await initializeLLMProvider({ ...llmConfig, provider: 'anthropic' });
+        }
+      }
 
       // Initialize MCP Manager
       this.mcpManager = new MCPManager(this.configService);
@@ -46,7 +62,19 @@ class RoninCLI {
 
   async handleOneShotQuery(query) {
     await this.initialize();
-    
+
+    // Check if this is a command
+    if (this.commandService.isCommand(query)) {
+      try {
+        const result = await this.commandService.executeCommand(query);
+        this.ui.displayCommandResult(result);
+        process.exit(result.type === 'error' ? 1 : 0);
+      } catch (error) {
+        this.ui.displayError(`Command error: ${error.message}`);
+        process.exit(1);
+      }
+    }
+
     try {
       this.ui.showSpinner();
       const responseStream = this.conversationService.streamResponse(query);
@@ -161,7 +189,7 @@ const app = new RoninCLI();
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n[Ronin] Shutting down...');
+  // Shutting down
   if (app.mcpManager) {
     await app.mcpManager.shutdown();
   }
@@ -176,6 +204,6 @@ process.on('SIGTERM', async () => {
 });
 
 app.run().catch((error) => {
-  console.error('Application error:', error);
+  // Application error
   process.exit(1);
 });

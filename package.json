@@ -26,6 +26,7 @@
     "chalk": "^5.4.1",
     "cli-spinner": "^0.2.10",
     "dotenv": "^16.5.0",
+    "node-llama-cpp": "^3.13.0",
     "ora": "^8.2.0"
   }
 }

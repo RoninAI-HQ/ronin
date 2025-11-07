@@ -1,12 +1,9 @@
-import { PermissionCache } from './PermissionCache.js';
-import { getLLMProviderManager } from '../api.js';
-import { inlineLLMCommands } from './CommandServiceExtensions.js';
+import { getLLMProviderManager } from '../api.js';\nimport { inlineLLMCommands } from './CommandServiceExtensions.js';
 
 export class CommandService {
   constructor(fileService, conversationService) {
     this.fileService = fileService;
     this.conversationService = conversationService;
-    this.permissionCache = new PermissionCache();
     this.configService = null;
     this.commands = {
       '/help': this.showHelp.bind(this),
@@ -17,7 +14,6 @@ export class CommandService {
       '/load': this.loadConversation.bind(this),
       '/new': this.newConversation.bind(this),
       '/clear': this.clearScreen.bind(this),
-      '/permissions': this.managePermissions.bind(this),
       '/provider': this.switchProvider.bind(this),
       '/models': this.listModels.bind(this),
       '/pull': this.pullModel.bind(this),
@@ -39,11 +35,11 @@ export class CommandService {
 
   async executeCommand(input) {
     const [command, ...args] = input.split(' ');
-
+    
     if (command in this.commands) {
       return await this.commands[command](args.join(' '));
     }
-
+    
     return { type: 'error', message: `Unknown command: ${command}` };
   }
 
@@ -62,12 +58,6 @@ export class CommandService {
   /load [path]   - Load a conversation from the specified JSON file.
   /new           - Save current conversation, then start a new one (clears screen and history).
   /clear         - Clear the terminal screen.
-
-Permission management:
-  /permissions         - Manage tool permissions.
-  /permissions status  - Show permission cache status.
-  /permissions clear   - Clear all cached permissions.
-  /permissions always  - Enable/disable always-ask mode.
 
 LLM Provider commands (current: ${currentProvider}):
   /provider      - Show current LLM provider.
@@ -128,15 +118,15 @@ LLM Provider commands (current: ${currentProvider}):
     try {
       const history = await this.fileService.loadConversation(args);
       this.conversationService.setHistory(history);
-
+      
       let preview = '';
       if (history.length > 0) {
         const lastMessage = history[history.length - 1];
         preview = `Last message: [${lastMessage.role}] ${lastMessage.content.substring(0, 50)}...`;
       }
-
-      return {
-        type: 'success',
+      
+      return { 
+        type: 'success', 
         message: `Conversation loaded from ${args}.`,
         additionalMessage: preview
       };
@@ -153,9 +143,9 @@ LLM Provider commands (current: ${currentProvider}):
         );
       }
       this.conversationService.clearHistory();
-      return {
-        type: 'new',
-        message: 'New conversation started. Previous conversation saved as JSON (if not empty).'
+      return { 
+        type: 'new', 
+        message: 'New conversation started. Previous conversation saved as JSON (if not empty).' 
       };
     } catch (error) {
       return { type: 'error', message: `Error saving conversation: ${error.message}` };
@@ -164,67 +154,6 @@ LLM Provider commands (current: ${currentProvider}):
 
   clearScreen() {
     return { type: 'clear', message: 'Screen cleared.' };
-  }
-
-  async managePermissions(args) {
-    if (!args) {
-      return {
-        type: 'info',
-        message: `Permission management commands:
-  /permissions status  - Show permission cache status
-  /permissions clear   - Clear all cached permissions
-  /permissions always on/off - Enable/disable always-ask mode`
-      };
-    }
-
-    const [subcommand, ...subargs] = args.split(' ');
-
-    switch (subcommand.toLowerCase()) {
-      case 'status':
-        const stats = this.permissionCache.getStats();
-        return {
-          type: 'info',
-          message: `Permission Cache Status:
-  Total cached approvals: ${stats.totalApprovals}
-  Always ask mode: ${stats.alwaysAsk ? 'ON' : 'OFF'}
-  Session started: ${stats.sessionStart ? new Date(stats.sessionStart).toLocaleString() : 'Unknown'}`
-        };
-
-      case 'clear':
-        this.permissionCache.clearCache();
-        return {
-          type: 'success',
-          message: 'All cached permissions have been cleared.'
-        };
-
-      case 'always':
-        const mode = subargs[0]?.toLowerCase();
-        if (mode === 'on' || mode === 'true') {
-          this.permissionCache.setAlwaysAsk(true);
-          return {
-            type: 'success',
-            message: 'Always-ask mode enabled. All tool calls will require explicit permission.'
-          };
-        } else if (mode === 'off' || mode === 'false') {
-          this.permissionCache.setAlwaysAsk(false);
-          return {
-            type: 'success',
-            message: 'Always-ask mode disabled. Cached permissions will be used when available.'
-          };
-        } else {
-          const currentMode = this.permissionCache.getStats().alwaysAsk;
-          return {
-            type: 'info',
-            message: `Always-ask mode is currently ${currentMode ? 'ON' : 'OFF'}. Use "/permissions always on" or "/permissions always off" to change.`
-          };
-        }
-
-      default:
-        return {
-          type: 'error',
-          message: `Unknown permissions subcommand: ${subcommand}`
-        };
-    }
   }
 
   async switchProvider(args) {
@@ -261,28 +190,22 @@ LLM Provider commands (current: ${currentProvider}):
       await manager.switchProvider(provider, config);
       const modelName = manager.getModelName();
 
-      // Persist the provider change to disk
-      if (this.configService) {
-        this.configService.setLLMProvider(provider, config);
-        const savedPath = this.configService.saveLLMConfig();
-      }
-
       if (provider === 'ollama') {
         return {
           type: 'success',
           message: `Switched to Ollama provider (${modelName})`,
-          additionalMessage: 'Note: Make sure Ollama is running (ollama serve). Provider preference saved.'
+          additionalMessage: 'Note: Make sure Ollama is running (ollama serve)'
         };
       } else if (provider === 'inline-llm') {
         return {
           type: 'success',
           message: `Switched to Inline Local LLM provider (${modelName})`,
-          additionalMessage: 'Note: Models run directly in Ronin. Use /models-available to see downloadable models. Provider preference saved.'
+          additionalMessage: 'Note: Models run directly in Ronin. Use /models-available to see downloadable models.'
         };
       } else {
         return {
           type: 'success',
-          message: `Switched to Anthropic Claude provider. Provider preference saved.`
+          message: `Switched to Anthropic Claude provider`
         };
       }
     } catch (error) {

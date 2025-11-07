@@ -2,12 +2,28 @@ import axios from 'axios';
 import chalk from 'chalk';
 import { ToolResultFormatter } from './utils/ToolResultFormatter.js';
 import { PermissionCache } from './services/PermissionCache.js';
+import { LLMProviderManager } from './providers/LLMProviderManager.js';
 
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_NAME = 'claude-sonnet-4-20250514'; // Or the specific version like claude-3-7-sonnet-20250219
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_TOKENS = 2048; // Default max tokens
+
+// Global LLM provider manager
+let llmProviderManager = null;
+
+export async function initializeLLMProvider(config) {
+  if (!llmProviderManager) {
+    llmProviderManager = new LLMProviderManager();
+  }
+  await llmProviderManager.initialize(config);
+  return llmProviderManager;
+}
+
+export function getLLMProviderManager() {
+  return llmProviderManager;
+}
 
 /**
  * Sends a message to the Anthropic Claude API and returns an async iterator for the assistant's response.
@@ -18,9 +34,15 @@ const MAX_TOKENS = 2048; // Default max tokens
  * @returns {AsyncGenerator<string, void, unknown>|null} An async iterator yielding text chunks, or null if an error occurs.
  */
 export async function* getClaudeResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null, cliInterface = null) {
+  // Check if we're using a local provider
+  if (llmProviderManager && llmProviderManager.isLocalProvider()) {
+    yield* getLocalLLMResponse(userMessage, conversationHistory, tools, mcpManager);
+    return;
+  }
+
   // Initialize permission cache
   const permissionCache = new PermissionCache();
-  // Ensure API key is available
+  // Ensure API key is available for Anthropic
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('API key not configured');
   }
@@ -338,5 +360,106 @@ function getToolDescription(toolName, toolInput) {
       return `${method} ${domain}`;
     default:
       return `Using ${toolName}`;
+  }
+}
+
+// Helper function to extract complete JSON from TOOL_USE: pattern
+function extractToolUseJson(text) {
+  const toolUseIndex = text.indexOf('TOOL_USE:');
+  if (toolUseIndex === -1) return null;
+
+  // Find the starting position of the JSON object
+  let jsonStart = text.indexOf('{', toolUseIndex);
+  if (jsonStart === -1) return null;
+
+  // Count braces to find the matching closing brace
+  let braceCount = 0;
+  let jsonEnd = -1;
+
+  for (let i = jsonStart; i < text.length; i++) {
+    if (text[i] === '{') {
+      braceCount++;
+    } else if (text[i] === '}') {
+      braceCount--;
+      if (braceCount === 0) {
+        jsonEnd = i + 1;
+        break;
+      }
+    }
+  }
+
+  if (jsonEnd === -1) return null; // Incomplete JSON
+
+  return text.substring(jsonStart, jsonEnd);
+}
+
+async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
+  try {
+    const provider = llmProviderManager.getProvider();
+    if (!provider) {
+      throw new Error('Local LLM provider not initialized');
+    }
+
+    // Combine conversation history with the new message
+    const messages = [
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    // Stream response from local LLM
+    let fullResponse = '';
+    let toolExecuted = false;
+
+    for await (const chunk of provider.streamResponse(messages, tools)) {
+      fullResponse += chunk;
+      yield chunk;
+
+      // Check if the response contains a tool use pattern
+      // This is a simple implementation - you might want to enhance this
+      if (!toolExecuted && tools && tools.length > 0 && fullResponse.includes('TOOL_USE:')) {
+        const toolJson = extractToolUseJson(fullResponse);
+        if (toolJson) {
+          try {
+            const toolCall = JSON.parse(toolJson);
+            if (mcpManager && toolCall.name && toolCall.parameters) {
+              toolExecuted = true; // Mark as executed to prevent duplicates
+
+              yield `\n\n*🔄 Executing tool: **${toolCall.name}***\n\n`;
+
+              const result = await mcpManager.executeTool(toolCall.name, toolCall.parameters);
+              const formattedResult = ToolResultFormatter.formatResult(
+                toolCall.name,
+                toolCall.parameters,
+                result
+              );
+
+              yield formattedResult;
+
+              // Continue conversation with tool result
+              const toolResultMessage = `Tool ${toolCall.name} returned: ${JSON.stringify(result)}`;
+              const continuationMessages = [
+                ...messages,
+                { role: 'assistant', content: fullResponse },
+                { role: 'user', content: toolResultMessage }
+              ];
+
+              yield '\n\n---\n\n';
+
+              // Get follow-up response
+              for await (const chunk of provider.streamResponse(continuationMessages, tools)) {
+                yield chunk;
+              }
+
+              break; // Exit the current streaming loop since we've handled the tool
+            }
+          } catch (error) {
+            yield `\n\nError executing tool: ${error.message}\n\n`;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error with local LLM:', error);
+    throw new Error(`Local LLM error: ${error.message}`);
   }
 } 
