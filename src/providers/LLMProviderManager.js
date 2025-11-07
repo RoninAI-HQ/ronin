@@ -59,7 +59,7 @@ export class LLMProviderManager {
   }
 
   isLocalProvider() {
-    return this.providerType === 'ollama';
+    return this.providerType === 'ollama' || this.providerType === 'inline-llm';
   }
 
   getProvider() {

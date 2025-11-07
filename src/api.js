@@ -280,6 +280,36 @@ export async function* getClaudeResponse(userMessage, conversationHistory = [], 
   } // End of while loop
 }
 
+// Helper function to extract complete JSON from TOOL_USE: pattern
+function extractToolUseJson(text) {
+  const toolUseIndex = text.indexOf('TOOL_USE:');
+  if (toolUseIndex === -1) return null;
+
+  // Find the starting position of the JSON object
+  let jsonStart = text.indexOf('{', toolUseIndex);
+  if (jsonStart === -1) return null;
+
+  // Count braces to find the matching closing brace
+  let braceCount = 0;
+  let jsonEnd = -1;
+
+  for (let i = jsonStart; i < text.length; i++) {
+    if (text[i] === '{') {
+      braceCount++;
+    } else if (text[i] === '}') {
+      braceCount--;
+      if (braceCount === 0) {
+        jsonEnd = i + 1;
+        break;
+      }
+    }
+  }
+
+  if (jsonEnd === -1) return null; // Incomplete JSON
+
+  return text.substring(jsonStart, jsonEnd);
+}
+
 async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
   try {
     const provider = llmProviderManager.getProvider();
@@ -295,18 +325,22 @@ async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools
 
     // Stream response from local LLM
     let fullResponse = '';
+    let toolExecuted = false;
+
     for await (const chunk of provider.streamResponse(messages, tools)) {
       fullResponse += chunk;
       yield chunk;
 
       // Check if the response contains a tool use pattern
       // This is a simple implementation - you might want to enhance this
-      if (tools && tools.length > 0 && fullResponse.includes('TOOL_USE:')) {
-        const toolUseMatch = fullResponse.match(/TOOL_USE:\s*({[^}]+})/);
-        if (toolUseMatch) {
+      if (!toolExecuted && tools && tools.length > 0 && fullResponse.includes('TOOL_USE:')) {
+        const toolJson = extractToolUseJson(fullResponse);
+        if (toolJson) {
           try {
-            const toolCall = JSON.parse(toolUseMatch[1]);
+            const toolCall = JSON.parse(toolJson);
             if (mcpManager && toolCall.name && toolCall.parameters) {
+              toolExecuted = true; // Mark as executed to prevent duplicates
+
               yield `\n\n*🔄 Executing tool: **${toolCall.name}***\n\n`;
 
               const result = await mcpManager.executeTool(toolCall.name, toolCall.parameters);
@@ -332,6 +366,8 @@ async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools
               for await (const chunk of provider.streamResponse(continuationMessages, tools)) {
                 yield chunk;
               }
+
+              break; // Exit the current streaming loop since we've handled the tool
             }
           } catch (error) {
             yield `\n\nError executing tool: ${error.message}\n\n`;

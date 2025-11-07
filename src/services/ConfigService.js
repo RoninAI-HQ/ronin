@@ -165,4 +165,33 @@ export class ConfigService {
       ...config
     };
   }
+
+  saveLLMConfig() {
+    // Save the current LLM configuration to disk
+    const homeDir = os.homedir();
+    const roninDir = path.join(homeDir, '.ronin');
+    const llmConfigPath = path.join(roninDir, 'llm.json');
+
+    // Ensure .ronin directory exists
+    if (!fs.existsSync(roninDir)) {
+      fs.mkdirSync(roninDir, { recursive: true });
+    }
+
+    // Prepare config to save (exclude API keys)
+    const configToSave = {
+      provider: this.llmConfig.provider,
+      ollamaBaseUrl: this.llmConfig.ollamaBaseUrl,
+      ollamaModel: this.llmConfig.ollamaModel,
+      inlineModelName: this.llmConfig.inlineModelName,
+      inlineModelsDir: this.llmConfig.inlineModelsDir,
+      contextSize: this.llmConfig.contextSize,
+      gpuLayers: this.llmConfig.gpuLayers,
+      maxTokens: this.llmConfig.maxTokens,
+      temperature: this.llmConfig.temperature
+    };
+
+    // Write to file
+    fs.writeFileSync(llmConfigPath, JSON.stringify(configToSave, null, 2), 'utf-8');
+    return llmConfigPath;
+  }
 }

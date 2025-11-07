@@ -191,22 +191,28 @@ LLM Provider commands (current: ${currentProvider}):
       await manager.switchProvider(provider, config);
       const modelName = manager.getModelName();
 
+      // Persist the provider change to disk
+      if (this.configService) {
+        this.configService.setLLMProvider(provider, config);
+        const savedPath = this.configService.saveLLMConfig();
+      }
+
       if (provider === 'ollama') {
         return {
           type: 'success',
           message: `Switched to Ollama provider (${modelName})`,
-          additionalMessage: 'Note: Make sure Ollama is running (ollama serve)'
+          additionalMessage: 'Note: Make sure Ollama is running (ollama serve). Provider preference saved.'
         };
       } else if (provider === 'inline-llm') {
         return {
           type: 'success',
           message: `Switched to Inline Local LLM provider (${modelName})`,
-          additionalMessage: 'Note: Models run directly in Ronin. Use /models-available to see downloadable models.'
+          additionalMessage: 'Note: Models run directly in Ronin. Use /models-available to see downloadable models. Provider preference saved.'
         };
       } else {
         return {
           type: 'success',
-          message: `Switched to Anthropic Claude provider`
+          message: `Switched to Anthropic Claude provider. Provider preference saved.`
         };
       }
     } catch (error) {
