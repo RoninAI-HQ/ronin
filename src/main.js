@@ -7,6 +7,7 @@ import { ConfigService } from './services/ConfigService.js';
 import { MCPManager } from './services/MCPManager.js';
 import { UIController } from './ui/UIController.js';
 import { CLIInterface } from './ui/CLIInterface.js';
+import { initializeLLMProvider } from './api.js';
 
 class RoninCLI {
   constructor() {
@@ -23,6 +24,21 @@ class RoninCLI {
     try {
       this.configService.loadConfig();
 
+      // Pass config service to command service
+      this.commandService.setConfigService(this.configService);
+
+      // Initialize LLM Provider
+      const llmConfig = this.configService.getLLMConfig();
+      try {
+        await initializeLLMProvider(llmConfig);
+      } catch (llmError) {
+        // Failed to initialize provider
+        if (llmConfig.provider === 'ollama') {
+          // Falling back to Anthropic provider
+          await initializeLLMProvider({ ...llmConfig, provider: 'anthropic' });
+        }
+      }
+
       // Initialize MCP Manager
       this.mcpManager = new MCPManager(this.configService);
       await this.mcpManager.initialize();
@@ -30,14 +46,17 @@ class RoninCLI {
       // Connect MCP to ConversationService
       this.conversationService.setMCPManager(this.mcpManager);
 
+      // Update CommandService with MCPManager and ConfigService
+      this.commandService.mcpManager = this.mcpManager;
+      this.commandService.configService = this.configService;
+
+      // Connect CLI interface to ConversationService for confirmations
+      this.conversationService.setCLIInterface(this.cli);
+
       // Display MCP status
       const servers = this.mcpManager.getServers();
       if (servers.length > 0) {
-        console.log(`[MCP] Active servers: ${servers.join(', ')}`);
         const tools = this.mcpManager.getAvailableTools();
-        if (tools.length > 0) {
-          console.log(`[MCP] Available tools: ${tools.length}`);
-        }
       }
     } catch (error) {
       this.ui.displayError(`Configuration error: ${error.message}`);
@@ -47,7 +66,19 @@ class RoninCLI {
 
   async handleOneShotQuery(query) {
     await this.initialize();
-    
+
+    // Check if this is a command
+    if (this.commandService.isCommand(query)) {
+      try {
+        const result = await this.commandService.executeCommand(query);
+        this.ui.displayCommandResult(result);
+        process.exit(result.type === 'error' ? 1 : 0);
+      } catch (error) {
+        this.ui.displayError(`Command error: ${error.message}`);
+        process.exit(1);
+      }
+    }
+
     try {
       this.ui.showSpinner();
       const responseStream = this.conversationService.streamResponse(query);
@@ -61,7 +92,7 @@ class RoninCLI {
         }
         this.ui.streamAssistantResponse(chunk);
       }
-      
+
       if (isFirstChunk) {
         this.ui.hideSpinner();
         this.ui.displayError('Claude responded, but the message was empty.');
@@ -135,7 +166,7 @@ class RoninCLI {
           }
           this.ui.streamAssistantResponse(chunk);
         }
-        
+
         if (isFirstChunk) {
           this.ui.hideSpinner();
           this.ui.displayMessage('Claude responded, but the message was empty. Please try again.');
@@ -162,7 +193,7 @@ const app = new RoninCLI();
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n[Ronin] Shutting down...');
+  // Shutting down
   if (app.mcpManager) {
     await app.mcpManager.shutdown();
   }
@@ -177,6 +208,6 @@ process.on('SIGTERM', async () => {
 });
 
 app.run().catch((error) => {
-  console.error('Application error:', error);
+  // Application error
   process.exit(1);
 });

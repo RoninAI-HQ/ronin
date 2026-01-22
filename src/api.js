@@ -1,11 +1,29 @@
 import axios from 'axios';
+import chalk from 'chalk';
 import { ToolResultFormatter } from './utils/ToolResultFormatter.js';
+import { PermissionCache } from './services/PermissionCache.js';
+import { LLMProviderManager } from './providers/LLMProviderManager.js';
 
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL_NAME = 'claude-sonnet-4-20250514'; // Or the specific version like claude-3-7-sonnet-20250219
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_TOKENS = 2048; // Default max tokens
+
+// Global LLM provider manager
+let llmProviderManager = null;
+
+export async function initializeLLMProvider(config) {
+  if (!llmProviderManager) {
+    llmProviderManager = new LLMProviderManager();
+  }
+  await llmProviderManager.initialize(config);
+  return llmProviderManager;
+}
+
+export function getLLMProviderManager() {
+  return llmProviderManager;
+}
 
 /**
  * Sends a message to the Anthropic Claude API and returns an async iterator for the assistant's response.
@@ -15,8 +33,16 @@ const MAX_TOKENS = 2048; // Default max tokens
  * @param {Object} mcpManager MCP Manager instance for executing tools.
  * @returns {AsyncGenerator<string, void, unknown>|null} An async iterator yielding text chunks, or null if an error occurs.
  */
-export async function* getClaudeResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
-  // Ensure API key is available
+export async function* getClaudeResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null, cliInterface = null) {
+  // Check if we're using a local provider
+  if (llmProviderManager && llmProviderManager.isLocalProvider()) {
+    yield* getLocalLLMResponse(userMessage, conversationHistory, tools, mcpManager);
+    return;
+  }
+
+  // Initialize permission cache
+  const permissionCache = new PermissionCache();
+  // Ensure API key is available for Anthropic
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('API key not configured');
   }
@@ -117,18 +143,71 @@ export async function* getClaudeResponse(userMessage, conversationHistory = [], 
                     const toolInput = JSON.parse(currentToolUse.input);
 
                     if (mcpManager) {
-                      yield `\n\n*🔄 Executing tool: **${currentToolUse.name}***\n\n`;
+                      // Check if tool requires user confirmation
+                      const requiresConfirmation = true; // Always ask for permission as requested
+
+                      if (requiresConfirmation && cliInterface) {
+                        // Check if we already have permission for this exact tool call
+                        const isPreApproved = permissionCache.isApproved(currentToolUse.name, toolInput);
+
+                        if (!isPreApproved) {
+                          // Format confirmation message based on tool type
+                          let confirmMessage = '';
+                          if (currentToolUse.name === 'shell_execute') {
+                            confirmMessage = `\n⚠️  Claude wants to execute a shell command:\n  ${toolInput.command}\n  Do you want to allow this?`;
+                          } else if (currentToolUse.name === 'file_write') {
+                            confirmMessage = `\n⚠️  Claude wants to write to a file:\n  ${toolInput.path}\n  (${toolInput.content?.length || 0} characters)\n  Do you want to allow this?`;
+                          } else if (currentToolUse.name === 'file_read') {
+                            confirmMessage = `\n📖 Claude wants to read a file:\n  ${toolInput.path}\n  Do you want to allow this?`;
+                          } else if (currentToolUse.name === 'file_list') {
+                            confirmMessage = `\n📁 Claude wants to list files in:\n  ${toolInput.directory || 'current directory'}\n  Do you want to allow this?`;
+                          } else if (currentToolUse.name === 'web_request') {
+                            confirmMessage = `\n🌐 Claude wants to make a web request:\n  ${toolInput.method || 'GET'} ${toolInput.url}\n  Do you want to allow this?`;
+                          } else {
+                            // Generic message for other tools
+                            confirmMessage = `\n🔧 Claude wants to use tool: ${currentToolUse.name}\n  ${JSON.stringify(toolInput, null, 2).split('\n').join('\n  ')}\n  Do you want to allow this?`;
+                          }
+
+                          const response = await cliInterface.askConfirmationWithRemember(confirmMessage);
+
+                          if (!response.approved) {
+                            yield `\n\n*❌ Tool execution cancelled by user: **${currentToolUse.name}***\n\n`;
+
+                            // Store cancellation as tool result
+                            toolUseBlocks.push({
+                              type: 'tool_use',
+                              id: currentToolUse.id,
+                              name: currentToolUse.name,
+                              input: toolInput,
+                              result: { error: 'User cancelled the operation', isError: true }
+                            });
+
+                            currentToolUse = null;
+                            continue;
+                          }
+
+                          // Store approval if user chose to remember
+                          if (response.remember) {
+                            permissionCache.addApproval(currentToolUse.name, toolInput, true);
+                            yield `\n\n` + chalk.gray(`🔧 Permission saved for this tool call\n`);
+                          }
+                        } else {
+                          yield `\n\n` + chalk.gray(`🔧 Using cached permission\n`);
+                        }
+                      }
+
+                      yield chalk.gray(`🔧 ${getToolDescription(currentToolUse.name, toolInput)} `);
 
                       const result = await mcpManager.executeTool(currentToolUse.name, toolInput);
 
-                      // Format the result using the intelligent formatter
+                      // Format the result using the simplified formatter
                       const formattedResult = ToolResultFormatter.formatResult(
                         currentToolUse.name,
                         toolInput,
                         result
                       );
 
-                      yield formattedResult;
+                      yield chalk.gray(formattedResult);
 
                       // Store tool use for conversation
                       toolUseBlocks.push({
@@ -230,7 +309,7 @@ export async function* getClaudeResponse(userMessage, conversationHistory = [], 
 
         // Continue the conversation loop to get Claude's response to the tool results
         // Reset for next iteration
-        yield `\n\n---\n\n`; // Visual separator for Claude's follow-up response
+        yield `\n\n`; // Separator for Claude's follow-up response
       } else {
         // No tools used, conversation is complete
         conversationComplete = true;
@@ -256,4 +335,131 @@ export async function* getClaudeResponse(userMessage, conversationHistory = [], 
       return null;
     }
   } // End of while loop
+}
+
+function getToolDescription(toolName, toolInput) {
+  switch (toolName) {
+    case 'file_read':
+      return `Reading ${toolInput.path || 'file'}`;
+    case 'file_write':
+      return `Writing to ${toolInput.path || 'file'}`;
+    case 'file_list':
+      return `Listing ${toolInput.path || toolInput.directory || 'directory'}`;
+    case 'shell_execute':
+      const cmd = toolInput.command || 'command';
+      const cmdName = cmd.split(' ')[0];
+      return `Running ${cmdName}`;
+    case 'web_request':
+      const method = (toolInput.method || 'GET').toUpperCase();
+      let domain;
+      try {
+        domain = new URL(toolInput.url).hostname;
+      } catch {
+        domain = toolInput.url?.substring(0, 20) + '...' || 'URL';
+      }
+      return `${method} ${domain}`;
+    default:
+      return `Using ${toolName}`;
+  }
+}
+
+// Helper function to extract complete JSON from TOOL_USE: pattern
+function extractToolUseJson(text) {
+  const toolUseIndex = text.indexOf('TOOL_USE:');
+  if (toolUseIndex === -1) return null;
+
+  // Find the starting position of the JSON object
+  let jsonStart = text.indexOf('{', toolUseIndex);
+  if (jsonStart === -1) return null;
+
+  // Count braces to find the matching closing brace
+  let braceCount = 0;
+  let jsonEnd = -1;
+
+  for (let i = jsonStart; i < text.length; i++) {
+    if (text[i] === '{') {
+      braceCount++;
+    } else if (text[i] === '}') {
+      braceCount--;
+      if (braceCount === 0) {
+        jsonEnd = i + 1;
+        break;
+      }
+    }
+  }
+
+  if (jsonEnd === -1) return null; // Incomplete JSON
+
+  return text.substring(jsonStart, jsonEnd);
+}
+
+async function* getLocalLLMResponse(userMessage, conversationHistory = [], tools = null, mcpManager = null) {
+  try {
+    const provider = llmProviderManager.getProvider();
+    if (!provider) {
+      throw new Error('Local LLM provider not initialized');
+    }
+
+    // Combine conversation history with the new message
+    const messages = [
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    // Stream response from local LLM
+    let fullResponse = '';
+    let toolExecuted = false;
+
+    for await (const chunk of provider.streamResponse(messages, tools)) {
+      fullResponse += chunk;
+      yield chunk;
+
+      // Check if the response contains a tool use pattern
+      // This is a simple implementation - you might want to enhance this
+      if (!toolExecuted && tools && tools.length > 0 && fullResponse.includes('TOOL_USE:')) {
+        const toolJson = extractToolUseJson(fullResponse);
+        if (toolJson) {
+          try {
+            const toolCall = JSON.parse(toolJson);
+            if (mcpManager && toolCall.name && toolCall.parameters) {
+              toolExecuted = true; // Mark as executed to prevent duplicates
+
+              yield `\n\n*🔄 Executing tool: **${toolCall.name}***\n\n`;
+
+              const result = await mcpManager.executeTool(toolCall.name, toolCall.parameters);
+              const formattedResult = ToolResultFormatter.formatResult(
+                toolCall.name,
+                toolCall.parameters,
+                result
+              );
+
+              yield formattedResult;
+
+              // Continue conversation with tool result
+              const toolResultMessage = `Tool ${toolCall.name} returned: ${JSON.stringify(result)}`;
+              const continuationMessages = [
+                ...messages,
+                { role: 'assistant', content: fullResponse },
+                { role: 'user', content: toolResultMessage }
+              ];
+
+              yield '\n\n---\n\n';
+
+              // Get follow-up response
+              for await (const chunk of provider.streamResponse(continuationMessages, tools)) {
+                yield chunk;
+              }
+
+              break; // Exit the current streaming loop since we've handled the tool
+            }
+          } catch (error) {
+            yield `\n\nError executing tool: ${error.message}\n\n`;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error with local LLM:', error);
+    throw new Error(`Local LLM error: ${error.message}`);
+  }
 } 

@@ -4,10 +4,15 @@ export class ConversationService {
   constructor() {
     this.history = [];
     this.mcpManager = null;
+    this.cliInterface = null;
   }
 
   setMCPManager(mcpManager) {
     this.mcpManager = mcpManager;
+  }
+
+  setCLIInterface(cliInterface) {
+    this.cliInterface = cliInterface;
   }
 
   addMessage(role, content) {
@@ -44,7 +49,7 @@ export class ConversationService {
         tools = this.mcpManager.getAvailableTools();
       }
 
-      const responseStream = getClaudeResponse(userMessage, this.history.slice(0, -1), tools, this.mcpManager);
+      const responseStream = getClaudeResponse(userMessage, this.history.slice(0, -1), tools, this.mcpManager, this.cliInterface);
 
       let fullResponse = '';
       for await (const chunk of responseStream) {
